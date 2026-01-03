@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# Hardhat files
+cache/
+artifacts/
+typechain-types/
+coverage/
+coverage.json
+
+# Ignition deployment files (contains sensitive addresses)
+ignition/deployments/
+
+# Frontend generated files (can be regenerated)
+frontend/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+.nyc_output/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Temporary files
+tmp/
+temp/
+*.tmp

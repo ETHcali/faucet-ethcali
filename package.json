@@ -1,0 +1,13 @@
+{
+  "name": "ethcalifaucet",
+  "version": "1.0.0",
+  "type": "module",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ignition": "^3.0.6",
+    "@nomicfoundation/hardhat-toolbox-viem": "^5.0.1",
+    "@openzeppelin/contracts": "^5.4.0",
+    "@types/node": "^25.0.3",
+    "hardhat": "^3.1.2",
+    "viem": "^2.43.5"
+  }
+}
