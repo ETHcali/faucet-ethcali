@@ -21,8 +21,8 @@ interface NetworkConfig {
   chainId: number;
   contracts: {
     ZKPassportNFT: ContractInfo;
-    SponsorContract: ContractInfo;
     FaucetVault: ContractInfo;
+    Swag1155?: ContractInfo;
   };
 }
 
@@ -63,8 +63,8 @@ async function main() {
   };
 
   const nftABI = readABI("ZKPassportNFT");
-  const sponsorABI = readABI("SponsorContract");
   const faucetABI = readABI("FaucetVault");
+  const swagABI = readABI("Swag1155");
 
   // Find all deployment directories
   const deploymentsDir = join(__dirname, "../ignition/deployments");
@@ -113,13 +113,20 @@ async function main() {
       continue;
     }
 
-    const nftAddress = deployedAddresses["ZKPassportSystem#ZKPassportNFT"];
-    const sponsorAddress = deployedAddresses["ZKPassportSystem#SponsorContract"];
-    const faucetAddress = deployedAddresses["ZKPassportSystem#FaucetVault"];
+    // Support multiple deployment module names
+    const nftAddress = 
+      deployedAddresses["CompleteSystem#ZKPassportNFT"] ||
+      deployedAddresses["ZKPassportSystem#ZKPassportNFT"];
+    const faucetAddress = 
+      deployedAddresses["CompleteSystem#FaucetVault"] ||
+      deployedAddresses["ZKPassportSystem#FaucetVault"];
+    const swagAddress =
+      deployedAddresses["CompleteSystem#Swag1155"] ||
+      deployedAddresses["Swag1155System#Swag1155"] ||
+      deployedAddresses["Swag1155#Swag1155"];
 
-    if (!nftAddress || !sponsorAddress || !faucetAddress) {
-      console.log(`   ⚠️  Skipping - missing contract addresses\n`);
-      continue;
+    if (!nftAddress || !faucetAddress) {
+      console.log(`   ⚠️  Missing ZKPassportNFT or FaucetVault - proceeding with available contracts`);
     }
 
     // Create network config
@@ -131,14 +138,18 @@ async function main() {
           address: nftAddress,
           abi: nftABI,
         },
-        SponsorContract: {
-          address: sponsorAddress,
-          abi: sponsorABI,
-        },
         FaucetVault: {
           address: faucetAddress,
           abi: faucetABI,
         },
+        ...(swagAddress
+          ? {
+              Swag1155: {
+                address: swagAddress,
+                abi: swagABI,
+              },
+            }
+          : {}),
       },
     };
 
@@ -164,8 +175,8 @@ async function main() {
       chainId,
       addresses: {
         ZKPassportNFT: nftAddress,
-        SponsorContract: sponsorAddress,
         FaucetVault: faucetAddress,
+        ...(swagAddress ? { Swag1155: swagAddress } : {}),
       },
     };
 
@@ -180,7 +191,6 @@ export const CONTRACTS = ${JSON.stringify(networkConfig, null, 2)} as const;
 
 export const ADDRESSES = {
   ZKPassportNFT: "${nftAddress}",
-  SponsorContract: "${sponsorAddress}",
   FaucetVault: "${faucetAddress}",
 } as const;
 
@@ -191,8 +201,11 @@ export const NETWORK = "${networkName}" as const;
 
     console.log(`   ✅ Created files in frontend/${networkName}/`);
     console.log(`      - ZKPassportNFT: ${nftAddress}`);
-    console.log(`      - SponsorContract: ${sponsorAddress}`);
-    console.log(`      - FaucetVault: ${faucetAddress}\n`);
+    console.log(`      - FaucetVault: ${faucetAddress}`);
+    if (swagAddress) {
+      console.log(`      - Swag1155: ${swagAddress}`);
+    }
+    console.log("");
   }
 
   // Write multi-network config
@@ -209,8 +222,8 @@ export const NETWORK = "${networkName}" as const;
       chainId: config.chainId,
       addresses: {
         ZKPassportNFT: config.contracts.ZKPassportNFT.address,
-        SponsorContract: config.contracts.SponsorContract.address,
         FaucetVault: config.contracts.FaucetVault.address,
+        ...(config.contracts.Swag1155 ? { Swag1155: config.contracts.Swag1155.address } : {}),
       },
     };
   }
@@ -229,13 +242,15 @@ export const NETWORK = "${networkName}" as const;
     JSON.stringify(nftABI, null, 2)
   );
   writeFileSync(
-    join(abisDir, "SponsorContract.json"),
-    JSON.stringify(sponsorABI, null, 2)
-  );
-  writeFileSync(
     join(abisDir, "FaucetVault.json"),
     JSON.stringify(faucetABI, null, 2)
   );
+  if (swagABI && swagABI.length) {
+    writeFileSync(
+      join(abisDir, "Swag1155.json"),
+      JSON.stringify(swagABI, null, 2)
+    );
+  }
   console.log(`✅ Created frontend/abis/ (shared ABIs)`);
 
   // Create TypeScript types for multi-network
@@ -274,7 +289,6 @@ frontend/
 ├── contracts.ts           # TypeScript exports (multi-network)
 ├── abis/                  # Shared ABIs (same for all networks)
 │   ├── ZKPassportNFT.json
-│   ├── SponsorContract.json
 │   └── FaucetVault.json
 ├── base/                  # Base Mainnet specific files
 │   ├── contracts.json

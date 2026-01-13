@@ -2,12 +2,27 @@
   "name": "ethcalifaucet",
   "version": "1.0.0",
   "type": "module",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:base": "hardhat ignition deploy ignition/modules/DeployAll.ts --network base",
+    "deploy:ethereum": "hardhat ignition deploy ignition/modules/DeployAll.ts --network ethereum",
+    "deploy:unichain": "hardhat ignition deploy ignition/modules/DeployAll.ts --network unichain",
+    "setup:frontend": "hardhat run scripts/setup-frontend.ts",
+    "verify:base": "hardhat run scripts/verify-contracts.ts --network base",
+    "verify:ethereum": "hardhat run scripts/verify-contracts.ts --network ethereum",
+    "verify:unichain": "hardhat run scripts/verify-contracts.ts --network unichain"
+  },
   "devDependencies": {
     "@nomicfoundation/hardhat-ignition": "^3.0.6",
     "@nomicfoundation/hardhat-toolbox-viem": "^5.0.1",
+    "@nomicfoundation/hardhat-verify": "^3.0.8",
     "@openzeppelin/contracts": "^5.4.0",
     "@types/node": "^25.0.3",
     "hardhat": "^3.1.2",
     "viem": "^2.43.5"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3"
   }
 }

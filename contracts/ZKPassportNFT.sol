@@ -15,8 +15,16 @@ import "@openzeppelin/contracts/utils/Strings.sol";
 contract ZKPassportNFT is ERC721, ERC721URIStorage, Ownable {
     using Strings for uint256;
 
-    // Address of the sponsor contract (only it can mint)
-    address public sponsorContract;
+    // Mapping to store approved verification data
+    mapping(string => VerificationData) public approvedVerifications;
+    
+    // Struct to store verification results from backend
+    struct VerificationData {
+        address userAddress;
+        bool faceMatchPassed;
+        bool personhoodVerified;
+        bool isApproved;
+    }
 
     // Mapping to prevent duplicate uniqueIdentifiers
     mapping(string => bool) private _usedIdentifiers;
@@ -44,7 +52,12 @@ contract ZKPassportNFT is ERC721, ERC721URIStorage, Ownable {
         bool faceMatchPassed,
         bool personhoodVerified
     );
-    event SponsorContractUpdated(address indexed oldSponsor, address indexed newSponsor);
+    event VerificationApproved(
+        string indexed uniqueIdentifier,
+        address indexed userAddress,
+        bool faceMatchPassed,
+        bool personhoodVerified
+    );
 
     /**
      * @notice Constructor
@@ -54,50 +67,101 @@ contract ZKPassportNFT is ERC721, ERC721URIStorage, Ownable {
     constructor(string memory name, string memory symbol) ERC721(name, symbol) Ownable(msg.sender) {}
 
     /**
-     * @notice Mint a new NFT (only callable by sponsor contract)
-     * @param to Address to mint to
+     * @notice Approve a verification for minting (backend only)
      * @param uniqueIdentifier ZKPassport unique identifier
+     * @param userAddress Address that completed verification
      * @param faceMatchPassed Whether face match verification passed
      * @param personhoodVerified Whether personhood verification passed
      */
-    function mint(
-        address to,
+    function approveVerification(
+        string memory uniqueIdentifier,
+        address userAddress,
+        bool faceMatchPassed,
+        bool personhoodVerified
+    ) external onlyOwner {
+        require(bytes(uniqueIdentifier).length > 0, "ZKPassportNFT: empty identifier");
+        require(userAddress != address(0), "ZKPassportNFT: invalid address");
+        require(!_usedIdentifiers[uniqueIdentifier], "ZKPassportNFT: identifier already used");
+        require(!_hasNFT[userAddress], "ZKPassportNFT: address already has NFT");
+        require(!approvedVerifications[uniqueIdentifier].isApproved, "ZKPassportNFT: already approved");
+
+        approvedVerifications[uniqueIdentifier] = VerificationData({
+            userAddress: userAddress,
+            faceMatchPassed: faceMatchPassed,
+            personhoodVerified: personhoodVerified,
+            isApproved: true
+        });
+
+        emit VerificationApproved(uniqueIdentifier, userAddress, faceMatchPassed, personhoodVerified);
+    }
+
+    /**
+     * @notice Self-verify and mint NFT directly with ZKPassport verification data
+     * @param uniqueIdentifier ZKPassport unique identifier
+     * @param faceMatchPassed Whether face matching verification passed
+     * @param personhoodVerified Whether personhood verification passed
+     */
+    function mintWithVerification(
         string memory uniqueIdentifier,
         bool faceMatchPassed,
         bool personhoodVerified
     ) external {
-        require(msg.sender == sponsorContract, "ZKPassportNFT: only sponsor can mint");
-        require(to != address(0), "ZKPassportNFT: invalid recipient");
         require(bytes(uniqueIdentifier).length > 0, "ZKPassportNFT: empty identifier");
         require(!_usedIdentifiers[uniqueIdentifier], "ZKPassportNFT: identifier already used");
-        require(!_hasNFT[to], "ZKPassportNFT: address already has NFT");
+        require(!_hasNFT[msg.sender], "ZKPassportNFT: address already has NFT");
+        
+        // In a production environment, you would verify ZKPassport proofs here
+        // For now, we'll trust the user's verification data
+        // TODO: Integrate ZKPassport proof verification on-chain
 
         uint256 tokenId = _tokenIdCounter;
         _tokenIdCounter++;
 
         _usedIdentifiers[uniqueIdentifier] = true;
-        _hasNFT[to] = true;
+        _hasNFT[msg.sender] = true;
         _tokenData[tokenId] = TokenData({
             uniqueIdentifier: uniqueIdentifier,
             faceMatchPassed: faceMatchPassed,
             personhoodVerified: personhoodVerified
         });
 
-        _safeMint(to, tokenId);
+        _safeMint(msg.sender, tokenId);
         _setTokenURI(tokenId, _generateTokenURI(tokenId));
 
-        emit NFTMinted(to, tokenId, uniqueIdentifier, faceMatchPassed, personhoodVerified);
+        emit NFTMinted(msg.sender, tokenId, uniqueIdentifier, faceMatchPassed, personhoodVerified);
     }
 
     /**
-     * @notice Set the sponsor contract address (admin only)
-     * @param newSponsor New sponsor contract address
+     * @notice Legacy mint function for backward compatibility (now deprecated)
+     * @param uniqueIdentifier ZKPassport unique identifier that was approved
      */
-    function setSponsor(address newSponsor) external onlyOwner {
-        require(newSponsor != address(0), "ZKPassportNFT: invalid sponsor");
-        address oldSponsor = sponsorContract;
-        sponsorContract = newSponsor;
-        emit SponsorContractUpdated(oldSponsor, newSponsor);
+    function mint(string memory uniqueIdentifier) external {
+        require(bytes(uniqueIdentifier).length > 0, "ZKPassportNFT: empty identifier");
+        
+        VerificationData memory verification = approvedVerifications[uniqueIdentifier];
+        require(verification.isApproved, "ZKPassportNFT: verification not approved");
+        require(verification.userAddress == msg.sender, "ZKPassportNFT: not authorized for this verification");
+        require(!_usedIdentifiers[uniqueIdentifier], "ZKPassportNFT: identifier already used");
+        require(!_hasNFT[msg.sender], "ZKPassportNFT: address already has NFT");
+
+        uint256 tokenId = _tokenIdCounter;
+        _tokenIdCounter++;
+
+        _usedIdentifiers[uniqueIdentifier] = true;
+        _hasNFT[msg.sender] = true;
+        _tokenData[tokenId] = TokenData({
+            uniqueIdentifier: uniqueIdentifier,
+            faceMatchPassed: verification.faceMatchPassed,
+            personhoodVerified: verification.personhoodVerified
+        });
+
+        // Clear the approval to prevent reuse
+        delete approvedVerifications[uniqueIdentifier];
+
+        _safeMint(msg.sender, tokenId);
+        _setTokenURI(tokenId, _generateTokenURI(tokenId));
+
+        emit NFTMinted(msg.sender, tokenId, uniqueIdentifier, verification.faceMatchPassed, verification.personhoodVerified);
     }
 
     /**

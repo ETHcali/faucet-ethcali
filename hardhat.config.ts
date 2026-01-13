@@ -1,8 +1,13 @@
 import hardhatToolboxViemPlugin from "@nomicfoundation/hardhat-toolbox-viem";
+import hardhatVerify from "@nomicfoundation/hardhat-verify";
 import { configVariable, defineConfig } from "hardhat/config";
+import dotenv from "dotenv";
+
+// Load environment variables from .env file
+dotenv.config();
 
 export default defineConfig({
-  plugins: [hardhatToolboxViemPlugin],
+  plugins: [hardhatToolboxViemPlugin, hardhatVerify],
   solidity: {
     profiles: {
       default: {
@@ -61,21 +66,9 @@ export default defineConfig({
       accounts: [configVariable("PRIVATE_KEY")],
     },
   },
-  etherscan: {
-    apiKey: {
-      mainnet: configVariable("ETHERSCAN_API_KEY"),
-      base: configVariable("BASESCAN_API_KEY"),
-      baseSepolia: configVariable("BASESCAN_API_KEY"),
+  verify: {
+    etherscan: {
+      apiKey: configVariable("BASESCAN_API_KEY"),
     },
-    customChains: [
-      {
-        network: "base",
-        chainId: 8453,
-        urls: {
-          apiURL: "https://api.basescan.org/api",
-          browserURL: "https://basescan.org",
-        },
-      },
-    ],
   },
 });

@@ -5,30 +5,18 @@ import { parseEther } from "viem";
 
 describe("ZKPassportNFT", async function () {
   const { viem } = await network.connect();
-  const [deployer, sponsor, user, unauthorized] = await viem.getWalletClients();
+  const [deployer, user, unauthorized, extraUser1, extraUser2] = await viem.getWalletClients();
 
   let nftContract: any;
-  let sponsorContract: any;
   let deployerAddress: string;
-  let sponsorAddress: string;
   let userAddress: string;
 
   before(async function () {
     deployerAddress = deployer.account.address;
-    sponsorAddress = sponsor.account.address;
     userAddress = user.account.address;
 
     // Deploy NFT contract
     nftContract = await viem.deployContract("ZKPassportNFT", ["ZKPassport", "ZKP"]);
-
-    // Deploy SponsorContract
-    sponsorContract = await viem.deployContract("SponsorContract", [
-      deployerAddress, // authorized signer
-      nftContract.address,
-    ]);
-
-    // Set sponsor contract in NFT
-    await nftContract.write.setSponsor([sponsorContract.address]);
   });
 
   it("Should deploy with correct name and symbol", async function () {
@@ -36,58 +24,136 @@ describe("ZKPassportNFT", async function () {
     assert.equal(await nftContract.read.symbol(), "ZKP");
   });
 
-  it("Should allow sponsor contract to mint", async function () {
+  it("Should allow user to mint with approved verification", async function () {
     const uniqueIdentifier = "test-id-1";
     const faceMatchPassed = true;
     const personhoodVerified = true;
 
-    // Fund sponsor contract
-    await sponsorContract.write.deposit({ value: parseEther("0.1") });
-
-    // Create signature and mint (simplified - in real scenario would use EIP-712)
-    // For testing, we'll directly call mint from sponsor contract
-    // In practice, sponsor contract would validate signature first
-    
-    // We need to call through sponsor contract, but for testing we can temporarily
-    // allow direct minting by setting sponsor to deployer
-    await nftContract.write.setSponsor([deployerAddress]);
-    
-    await nftContract.write.mint([
-      userAddress,
+    // Step 1: Owner approves verification
+    await nftContract.write.approveVerification([
       uniqueIdentifier,
+      userAddress,
       faceMatchPassed,
       personhoodVerified,
     ]);
 
-    // Restore sponsor
-    await nftContract.write.setSponsor([sponsorContract.address]);
+    // Step 2: User mints with approved verification
+    await nftContract.write.mint([uniqueIdentifier], { account: user.account });
 
     const balance = await nftContract.read.balanceOf([userAddress]);
     assert.equal(balance, 1n);
   });
 
-  it("Should prevent non-sponsor from minting", async function () {
-    const uniqueIdentifier = "test-id-2";
+  it("Should prevent user from minting without approval", async function () {
+    const uniqueIdentifier = "test-id-no-approval";
 
     try {
-      await nftContract.write.mint(
-        [userAddress, uniqueIdentifier, true, true],
-        { account: unauthorized.account }
-      );
+      await nftContract.write.mint([uniqueIdentifier], { account: user.account });
       assert.fail("Should have reverted");
     } catch (error: any) {
-      assert(error.message.includes("only sponsor can mint"));
+      assert(error.message.includes("verification not approved"));
+    }
+  });
+
+  it("Should allow user to self-verify and mint directly", async function () {
+    const uniqueIdentifier = "test-self-verify-1";
+
+    // User directly mints with their verification data
+    await nftContract.write.mintWithVerification([
+      uniqueIdentifier,
+      true,  // faceMatchPassed
+      true,  // personhoodVerified
+    ], { account: unauthorized.account }); // Using unauthorized account to avoid NFT conflict
+
+    const balance = await nftContract.read.balanceOf([unauthorized.account.address]);
+    assert.equal(balance, 1n);
+
+    // Check token data
+    const tokenId = 1n; // Second NFT minted
+    const data = await nftContract.read.getTokenData([tokenId]);
+    assert.equal(data.uniqueIdentifier, uniqueIdentifier);
+    assert.equal(data.faceMatchPassed, true);
+    assert.equal(data.personhoodVerified, true);
+  });
+
+  it("Should prevent unauthorized user from minting approved verification", async function () {
+    const uniqueIdentifier = "test-id-unauthorized";
+
+    // Approve for extraUser1 (who doesn't have an NFT yet)
+    await nftContract.write.approveVerification([
+      uniqueIdentifier,
+      extraUser1.account.address,
+      true,
+      true,
+    ]);
+
+    try {
+      await nftContract.write.mint([uniqueIdentifier], { account: user.account }); // User tries to mint extraUser1's verification
+      assert.fail("Should have reverted");
+    } catch (error: any) {
+      assert(error.message.includes("not authorized for this verification"));
+    }
+  });
+
+  it("Should prevent duplicate self-verification with same identifier", async function () {
+    const uniqueIdentifier = "test-duplicate-self";
+
+    // First mint succeeds with deployer account
+    await nftContract.write.mintWithVerification([
+      uniqueIdentifier,
+      true,
+      true,
+    ], { account: deployer.account });
+
+    // Second mint with same identifier should fail
+    try {
+      await nftContract.write.mintWithVerification([
+        uniqueIdentifier,
+        true,
+        true,
+      ], { account: unauthorized.account });
+      assert.fail("Should have reverted");
+    } catch (error: any) {
+      assert(error.message.includes("identifier already used"));
+    }
+  });
+
+  it("Should prevent self-verification if address already has NFT", async function () {
+    const uniqueIdentifier = "test-multiple-nft";
+
+    try {
+      await nftContract.write.mintWithVerification([
+        uniqueIdentifier,
+        true,
+        true,
+      ], { account: user.account }); // User already has NFT from previous test
+      assert.fail("Should have reverted");
+    } catch (error: any) {
+      assert(error.message.includes("address already has NFT"));
+    }
+  });
+
+  it("Should reject self-verification with empty identifier", async function () {
+    try {
+      await nftContract.write.mintWithVerification([
+        "",
+        true,
+        true,
+      ], { account: unauthorized.account }); // Using unauthorized account
+      assert.fail("Should have reverted");
+    } catch (error: any) {
+      assert(error.message.includes("empty identifier"));
     }
   });
 
   it("Should prevent duplicate uniqueIdentifier", async function () {
     const uniqueIdentifier = "test-id-1"; // Same as first test
-    await nftContract.write.setSponsor([deployerAddress]);
 
     try {
-      await nftContract.write.mint([
-        unauthorized.account.address,
+      // Try to approve the same identifier again
+      await nftContract.write.approveVerification([
         uniqueIdentifier,
+        unauthorized.account.address,
         true,
         true,
       ]);
@@ -95,18 +161,16 @@ describe("ZKPassportNFT", async function () {
     } catch (error: any) {
       assert(error.message.includes("identifier already used"));
     }
-
-    await nftContract.write.setSponsor([sponsorContract.address]);
   });
 
   it("Should prevent multiple NFTs per address", async function () {
     const uniqueIdentifier = "test-id-3";
-    await nftContract.write.setSponsor([deployerAddress]);
 
     try {
-      await nftContract.write.mint([
-        userAddress, // Already has NFT from first test
+      // Try to approve for user who already has NFT
+      await nftContract.write.approveVerification([
         uniqueIdentifier,
+        userAddress, // Already has NFT from first test
         true,
         true,
       ]);
@@ -114,8 +178,6 @@ describe("ZKPassportNFT", async function () {
     } catch (error: any) {
       assert(error.message.includes("address already has NFT"));
     }
-
-    await nftContract.write.setSponsor([sponsorContract.address]);
   });
 
   it("Should return correct token data", async function () {
@@ -139,8 +201,9 @@ describe("ZKPassportNFT", async function () {
     const hasNFT = await nftContract.read.hasNFTByAddress([userAddress]);
     assert.equal(hasNFT, true);
 
-    const noNFT = await nftContract.read.hasNFTByAddress([unauthorized.account.address]);
-    assert.equal(noNFT, false);
+    // Check deployer who has NFT from duplicate test
+    const deployerHasNFT = await nftContract.read.hasNFTByAddress([deployerAddress]);
+    assert.equal(deployerHasNFT, true);
   });
 
   it("Should generate token URI", async function () {
@@ -171,50 +234,34 @@ describe("ZKPassportNFT", async function () {
     }
   });
 
-  it("Should allow owner to update sponsor contract", async function () {
-    const newSponsor = unauthorized.account.address;
-    await nftContract.write.setSponsor([newSponsor]);
-
-    assert.equal((await nftContract.read.sponsorContract()).toLowerCase(), newSponsor.toLowerCase());
-
-    // Restore original sponsor
-    await nftContract.write.setSponsor([sponsorContract.address]);
-  });
-
   it("Should reject invalid recipient address", async function () {
-    await nftContract.write.setSponsor([deployerAddress]);
+    const uniqueIdentifier = "test-invalid-recipient";
+    
+    // Approve for extraUser2 (who doesn't have an NFT yet)
+    await nftContract.write.approveVerification([
+      uniqueIdentifier,
+      extraUser2.account.address,
+      true,
+      true,
+    ]);
 
+    // Try to mint from user account (different from approved account)
     try {
-      await nftContract.write.mint([
-        "0x0000000000000000000000000000000000000000",
-        "test-id-4",
-        true,
-        true,
-      ]);
+      await nftContract.write.mint([uniqueIdentifier], { account: user.account });
       assert.fail("Should have reverted");
     } catch (error: any) {
-      assert(error.message.includes("invalid recipient"));
+      assert(error.message.includes("not authorized for this verification"));
     }
-
-    await nftContract.write.setSponsor([sponsorContract.address]);
   });
 
   it("Should reject empty uniqueIdentifier", async function () {
-    await nftContract.write.setSponsor([deployerAddress]);
-
+    // Try to mint with empty identifier (should fail at empty check)
     try {
-      await nftContract.write.mint([
-        unauthorized.account.address,
-        "",
-        true,
-        true,
-      ]);
+      await nftContract.write.mint([""], { account: user.account });
       assert.fail("Should have reverted");
     } catch (error: any) {
       assert(error.message.includes("empty identifier"));
     }
-
-    await nftContract.write.setSponsor([sponsorContract.address]);
   });
 });
 
