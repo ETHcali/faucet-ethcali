@@ -10,14 +10,15 @@ import "@openzeppelin/contracts/utils/Strings.sol";
 /**
  * @title ZKPassportNFT
  * @notice Soulbound ERC721 NFT representing ZKPassport verification
- * @dev Only the sponsor contract can mint. NFTs are soulbound (non-transferable)
+ * @dev NFTs are soulbound (non-transferable). Supports IPFS image or on-chain SVG.
+ *      Owner is set at deployment via constructor parameter.
  */
 contract ZKPassportNFT is ERC721, ERC721URIStorage, Ownable {
     using Strings for uint256;
 
     // Mapping to store approved verification data
     mapping(string => VerificationData) public approvedVerifications;
-    
+
     // Struct to store verification results from backend
     struct VerificationData {
         address userAddress;
@@ -37,6 +38,12 @@ contract ZKPassportNFT is ERC721, ERC721URIStorage, Ownable {
 
     // Token counter
     uint256 private _tokenIdCounter;
+
+    // NFT Metadata configuration (admin-settable)
+    string public nftImageURI;          // IPFS URI for NFT image (e.g., "ipfs://Qm...")
+    string public nftDescription;       // Description for all NFTs
+    string public nftExternalURL;       // External URL (e.g., ethcali website)
+    bool public useIPFSImage;           // If true, use IPFS image; if false, use on-chain SVG
 
     struct TokenData {
         string uniqueIdentifier;
@@ -58,13 +65,90 @@ contract ZKPassportNFT is ERC721, ERC721URIStorage, Ownable {
         bool faceMatchPassed,
         bool personhoodVerified
     );
+    event MetadataUpdated(string imageURI, string description, string externalURL, bool useIPFS);
 
     /**
      * @notice Constructor
      * @param name NFT name
      * @param symbol NFT symbol
+     * @param initialOwner Address to set as initial owner (use address(0) for deployer)
      */
-    constructor(string memory name, string memory symbol) ERC721(name, symbol) Ownable(msg.sender) {}
+    constructor(
+        string memory name,
+        string memory symbol,
+        address initialOwner
+    ) ERC721(name, symbol) Ownable(initialOwner == address(0) ? msg.sender : initialOwner) {
+        nftDescription = "ZKPassport Verification NFT - Proof of liveness and personhood respecting your privacy, enabling access to ETHCALI Smart Contracts.";
+        useIPFSImage = false;
+    }
+
+    // ============ Admin Metadata Functions ============
+
+    /**
+     * @notice Set the IPFS image URI for all NFTs
+     * @param imageURI IPFS URI (e.g., "ipfs://QmXyz...")
+     */
+    function setImageURI(string memory imageURI) external onlyOwner {
+        nftImageURI = imageURI;
+        emit MetadataUpdated(imageURI, nftDescription, nftExternalURL, useIPFSImage);
+    }
+
+    /**
+     * @notice Set the description for all NFTs
+     * @param description NFT description
+     */
+    function setDescription(string memory description) external onlyOwner {
+        require(bytes(description).length > 0, "ZKPassportNFT: empty description");
+        nftDescription = description;
+        emit MetadataUpdated(nftImageURI, description, nftExternalURL, useIPFSImage);
+    }
+
+    /**
+     * @notice Set the external URL for all NFTs
+     * @param externalURL External URL (e.g., "https://ethcali.com")
+     */
+    function setExternalURL(string memory externalURL) external onlyOwner {
+        nftExternalURL = externalURL;
+        emit MetadataUpdated(nftImageURI, nftDescription, externalURL, useIPFSImage);
+    }
+
+    /**
+     * @notice Toggle between IPFS image and on-chain SVG
+     * @param useIPFS If true, use IPFS image; if false, use on-chain SVG
+     */
+    function setUseIPFSImage(bool useIPFS) external onlyOwner {
+        if (useIPFS) {
+            require(bytes(nftImageURI).length > 0, "ZKPassportNFT: set image URI first");
+        }
+        useIPFSImage = useIPFS;
+        emit MetadataUpdated(nftImageURI, nftDescription, nftExternalURL, useIPFS);
+    }
+
+    /**
+     * @notice Set all metadata at once
+     * @param imageURI IPFS image URI
+     * @param description NFT description
+     * @param externalURL External URL
+     * @param useIPFS Whether to use IPFS image
+     */
+    function setMetadata(
+        string memory imageURI,
+        string memory description,
+        string memory externalURL,
+        bool useIPFS
+    ) external onlyOwner {
+        require(bytes(description).length > 0, "ZKPassportNFT: empty description");
+        if (useIPFS) {
+            require(bytes(imageURI).length > 0, "ZKPassportNFT: empty image URI");
+        }
+
+        nftImageURI = imageURI;
+        nftDescription = description;
+        nftExternalURL = externalURL;
+        useIPFSImage = useIPFS;
+
+        emit MetadataUpdated(imageURI, description, externalURL, useIPFS);
+    }
 
     /**
      * @notice Approve a verification for minting (backend only)
@@ -211,26 +295,51 @@ contract ZKPassportNFT is ERC721, ERC721URIStorage, Ownable {
      */
     function _generateTokenURI(uint256 tokenId) private view returns (string memory) {
         TokenData memory data = _tokenData[tokenId];
-        
-        string memory image = _generateSVG(tokenId, data);
-        
+
+        // Determine image source
+        string memory imageData;
+        if (useIPFSImage && bytes(nftImageURI).length > 0) {
+            // Use IPFS image directly
+            imageData = string(abi.encodePacked('"image":"', nftImageURI, '"'));
+        } else {
+            // Use on-chain SVG
+            string memory svg = _generateSVG(tokenId, data);
+            imageData = string(abi.encodePacked(
+                '"image":"data:image/svg+xml;base64,',
+                Base64.encode(bytes(svg)),
+                '"'
+            ));
+        }
+
+        // Build external URL if set
+        string memory externalUrlData = "";
+        if (bytes(nftExternalURL).length > 0) {
+            externalUrlData = string(abi.encodePacked(',"external_url":"', nftExternalURL, '"'));
+        }
+
         string memory json = Base64.encode(
             bytes(
                 string(
                     abi.encodePacked(
                         '{"name":"ZKPassport Verification #',
                         tokenId.toString(),
-                        '","description":"This is a proof of liveness and personhood respecting the privacy yours and enabling you to interact with the benefits of ETHCALI Smart Contracts.","image":"data:image/svg+xml;base64,',
-                        Base64.encode(bytes(image)),
-                        '","attributes":[',
+                        '","description":"',
+                        nftDescription,
+                        '",',
+                        imageData,
+                        externalUrlData,
+                        ',"attributes":[',
                         '{"trait_type":"Face Match","value":"',
                         data.faceMatchPassed ? "Passed" : "Failed",
                         '"},',
                         '{"trait_type":"Personhood","value":"',
                         data.personhoodVerified ? "Verified" : "Not Verified",
                         '"},',
-                        '{"trait_type":"Unique Identifier","value":"',
-                        data.uniqueIdentifier,
+                        '{"trait_type":"Verification Status","value":"',
+                        (data.faceMatchPassed && data.personhoodVerified) ? "Fully Verified" : "Partial",
+                        '"},',
+                        '{"trait_type":"Token ID","value":"',
+                        tokenId.toString(),
                         '"}',
                         ']}'
                     )

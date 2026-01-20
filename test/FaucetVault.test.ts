@@ -18,8 +18,12 @@ describe("FaucetVault", async function () {
     userAddress = user.account.address;
     claimAmount = parseEther("0.01");
 
-    // Deploy NFT contract
-    nftContract = await viem.deployContract("ZKPassportNFT", ["ZKPassport", "ZKP"]);
+    // Deploy NFT contract with deployer as initial owner
+    nftContract = await viem.deployContract("ZKPassportNFT", [
+      "ZKPassport",
+      "ZKP",
+      deployerAddress, // initialOwner
+    ]);
 
     // Deploy FaucetVault
     faucetVault = await viem.deployContract("FaucetVault", [
@@ -184,7 +188,11 @@ describe("FaucetVault", async function () {
 
   it("Should allow owner to update NFT contract", async function () {
     // Deploy new NFT contract
-    const newNFT = await viem.deployContract("ZKPassportNFT", ["ZKPassport", "ZKP"]);
+    const newNFT = await viem.deployContract("ZKPassportNFT", [
+      "ZKPassport",
+      "ZKP",
+      deployerAddress, // initialOwner
+    ]);
 
     await faucetVault.write.setNFTContract([newNFT.address]);
     const nftAddr = await faucetVault.read.nftContract();

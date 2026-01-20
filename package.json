@@ -5,9 +5,9 @@
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",
-    "deploy:base": "hardhat ignition deploy ignition/modules/DeployAll.ts --network base",
-    "deploy:ethereum": "hardhat ignition deploy ignition/modules/DeployAll.ts --network ethereum",
-    "deploy:unichain": "hardhat ignition deploy ignition/modules/DeployAll.ts --network unichain",
+    "deploy:base": "hardhat run scripts/deploy-all.ts --network base",
+    "deploy:ethereum": "hardhat run scripts/deploy-all.ts --network ethereum",
+    "deploy:unichain": "hardhat run scripts/deploy-all.ts --network unichain",
     "setup:frontend": "hardhat run scripts/setup-frontend.ts",
     "verify:base": "hardhat run scripts/verify-contracts.ts --network base",
     "verify:ethereum": "hardhat run scripts/verify-contracts.ts --network ethereum",

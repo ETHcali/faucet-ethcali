@@ -1,0 +1,15 @@
+{
+  "zkPassportNFT": "0x5811f284e340f6968bcffe2415e582e0eb429981",
+  "faucetManager": "0x79abd2dabe18fa1086e210c41b622ed6011e0c85",
+  "swag1155": "0xd7567b11720fb075be5db9daaf0af4ab93746799",
+  "network": "base",
+  "timestamp": "2026-01-20T03:55:30.521Z",
+  "config": {
+    "network": "base",
+    "superAdmin": "0x3C9204B25966591749450FB233D58E850e7C1f9F",
+    "zkpassportOwner": "0x3C9204B25966591749450FB233D58E850e7C1f9F",
+    "faucetAdmin": "0x3C9204B25966591749450FB233D58E850e7C1f9F",
+    "swagTreasury": "0x3C9204B25966591749450FB233D58E850e7C1f9F",
+    "usdcAddress": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+  }
+}

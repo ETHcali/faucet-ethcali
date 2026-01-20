@@ -1,5 +1,4 @@
-import hre from "hardhat";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
@@ -7,100 +6,138 @@ import { execSync } from "child_process";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-interface ContractAddresses {
-  ZKPassportNFT: string;
-  FaucetVault: string;
-  Swag1155: string;
+interface DeploymentResult {
+  zkPassportNFT: string;
+  faucetManager: string;
+  swag1155: string;
+  network: string;
+  timestamp: string;
+  config: {
+    network: string;
+    superAdmin: string;
+    zkpassportOwner: string;
+    faucetAdmin: string;
+    swagTreasury: string;
+    usdcAddress: string;
+  };
 }
 
 async function main() {
   // Get network from command line arguments
-  const networkArg = process.argv.find(arg => arg === '--network');
-  const networkIndex = process.argv.indexOf('--network');
-  const networkName = networkIndex >= 0 && networkIndex < process.argv.length - 1 
-    ? process.argv[networkIndex + 1]
-    : "base";
-  
+  const networkIndex = process.argv.indexOf("--network");
+  const networkName =
+    networkIndex >= 0 && networkIndex < process.argv.length - 1
+      ? process.argv[networkIndex + 1]
+      : "base";
+
   if (!networkName) {
-    console.error('❌ Network not specified. Use --network flag');
+    console.error("❌ Network not specified. Use --network flag");
     process.exit(1);
   }
-  
+
   console.log(`\n🔍 Verifying contracts on ${networkName}...`);
 
-  // Read addresses from frontend directory
-  const addressesPath = join(__dirname, "..", "frontend", networkName, "addresses.json");
-  
-  let addressesData: any;
-  try {
-    const content = readFileSync(addressesPath, "utf-8");
-    addressesData = JSON.parse(content);
-  } catch (error) {
-    console.error(`❌ Error reading addresses from ${addressesPath}`);
-    console.error(`   Run 'npx hardhat run scripts/setup-frontend.ts' first`);
+  // Read deployment info
+  const deploymentPath = join(__dirname, "..", "deployments", `${networkName}-latest.json`);
+
+  if (!existsSync(deploymentPath)) {
+    console.error(`❌ Deployment file not found: ${deploymentPath}`);
+    console.error(`   Run 'npm run deploy:${networkName}' first`);
     process.exit(1);
   }
 
-  const addresses: ContractAddresses = addressesData.addresses;
+  const deployment: DeploymentResult = JSON.parse(readFileSync(deploymentPath, "utf-8"));
 
-  // Get constructor arguments from environment
-  const baseURI = process.env.SWAG1155_BASE_URI || "";
-  const treasuryAddress = process.env.TREASURY_ADDRESS;
-  
-  // Get network-specific USDC address
-  const usdcAddresses: Record<string, string> = {
-    base: process.env.USDC_ADDRESS_BASE || "",
-    ethereum: process.env.USDC_ADDRESS_ETH || "",
-    unichain: process.env.USDC_ADDRESS_UNI || "",
-  };
-  const usdcAddress = usdcAddresses[networkName];
+  console.log(`\n📋 Contract Addresses (from deployment):`);
+  console.log(`   ZKPassportNFT:  ${deployment.zkPassportNFT}`);
+  console.log(`   FaucetManager:  ${deployment.faucetManager}`);
+  console.log(`   Swag1155:       ${deployment.swag1155}`);
 
-  if (!treasuryAddress || !usdcAddress) {
-    console.error(`❌ Missing environment variables for ${networkName}`);
-    process.exit(1);
-  }
+  console.log(`\n📋 Config (from deployment):`);
+  console.log(`   Owner/Admin:    ${deployment.config.zkpassportOwner}`);
+  console.log(`   Treasury:       ${deployment.config.swagTreasury}`);
+  console.log(`   USDC:           ${deployment.config.usdcAddress}`);
+
+  // Constructor arguments MUST match deploy-all.ts exactly:
+  // ZKPassportNFT: ["ZKPassport Verification", "ZKPASS", owner]
+  // FaucetManager: [nftAddress, admin]
+  // Swag1155: ["ipfs://", usdc, treasury, admin]
 
   // Verify ZKPassportNFT
-  console.log(`\n📝 Verifying ZKPassportNFT at ${addresses.ZKPassportNFT}...`);
+  console.log(`\n📝 Verifying ZKPassportNFT at ${deployment.zkPassportNFT}...`);
+  const zkpArgs = [
+    "ZKPassport Verification",  // name - must match deploy script
+    "ZKPASS",                    // symbol - must match deploy script
+    deployment.config.zkpassportOwner,
+  ];
+  console.log(`   Constructor args: ${JSON.stringify(zkpArgs)}`);
+
   try {
     execSync(
-      `npx hardhat verify --network ${networkName} ${addresses.ZKPassportNFT} "ZKPassport" "ZKP"`,
+      `npx hardhat verify --network ${networkName} ${deployment.zkPassportNFT} "${zkpArgs[0]}" "${zkpArgs[1]}" "${zkpArgs[2]}"`,
       { stdio: "inherit", cwd: join(__dirname, "..") }
     );
     console.log(`✅ ZKPassportNFT verified`);
   } catch (error: any) {
-    console.log(`ℹ️  ZKPassportNFT verification attempted`);
+    console.log(`ℹ️  ZKPassportNFT verification attempted (may already be verified or failed)`);
   }
 
-  // Verify FaucetVault
-  console.log(`\n📝 Verifying FaucetVault at ${addresses.FaucetVault}...`);
+  // Verify FaucetManager
+  console.log(`\n📝 Verifying FaucetManager at ${deployment.faucetManager}...`);
+  const faucetArgs = [
+    deployment.zkPassportNFT,
+    deployment.config.faucetAdmin,
+  ];
+  console.log(`   Constructor args: ${JSON.stringify(faucetArgs)}`);
+
   try {
     execSync(
-      `npx hardhat verify --network ${networkName} ${addresses.FaucetVault} "${addresses.ZKPassportNFT}" "100000000000000"`,
+      `npx hardhat verify --network ${networkName} ${deployment.faucetManager} "${faucetArgs[0]}" "${faucetArgs[1]}"`,
       { stdio: "inherit", cwd: join(__dirname, "..") }
     );
-    console.log(`✅ FaucetVault verified`);
+    console.log(`✅ FaucetManager verified`);
   } catch (error: any) {
-    console.log(`ℹ️  FaucetVault verification attempted`);
+    console.log(`ℹ️  FaucetManager verification attempted (may already be verified or failed)`);
   }
 
   // Verify Swag1155
-  console.log(`\n📝 Verifying Swag1155 at ${addresses.Swag1155}...`);
+  console.log(`\n📝 Verifying Swag1155 at ${deployment.swag1155}...`);
+  const swagArgs = [
+    "ipfs://",  // baseURI - must match deploy script
+    deployment.config.usdcAddress,
+    deployment.config.swagTreasury,
+    deployment.config.superAdmin,
+  ];
+  console.log(`   Constructor args: ${JSON.stringify(swagArgs)}`);
+
   try {
     execSync(
-      `npx hardhat verify --network ${networkName} ${addresses.Swag1155} "${baseURI}" "${usdcAddress}" "${treasuryAddress}"`,
+      `npx hardhat verify --network ${networkName} ${deployment.swag1155} "${swagArgs[0]}" "${swagArgs[1]}" "${swagArgs[2]}" "${swagArgs[3]}"`,
       { stdio: "inherit", cwd: join(__dirname, "..") }
     );
     console.log(`✅ Swag1155 verified`);
   } catch (error: any) {
-    console.log(`ℹ️  Swag1155 verification attempted`);
+    console.log(`ℹ️  Swag1155 verification attempted (may already be verified or failed)`);
   }
 
   console.log(`\n✅ Verification complete for ${networkName}!`);
+  console.log(`\n🔗 View on explorer:`);
+
+  const explorerUrls: Record<string, string> = {
+    base: "https://basescan.org/address",
+    ethereum: "https://etherscan.io/address",
+    unichain: "https://uniscan.xyz/address",
+  };
+  const explorerUrl = explorerUrls[networkName] || "";
+
+  if (explorerUrl) {
+    console.log(`   ZKPassportNFT:  ${explorerUrl}/${deployment.zkPassportNFT}`);
+    console.log(`   FaucetManager:  ${explorerUrl}/${deployment.faucetManager}`);
+    console.log(`   Swag1155:       ${explorerUrl}/${deployment.swag1155}`);
+  }
 }
 
 main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
-

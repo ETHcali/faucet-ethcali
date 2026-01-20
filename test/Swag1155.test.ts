@@ -22,8 +22,13 @@ describe("Swag1155", async function () {
     await usdc.write.mint([buyer.account.address, USDC(1000)]);
     await usdc.write.mint([buyer2.account.address, USDC(1000)]);
 
-    // Deploy Swag1155
-    swag = await viem.deployContract("Swag1155", [BASE_URI, usdc.address, treasury.account.address]);
+    // Deploy Swag1155 with deployer as initial admin
+    swag = await viem.deployContract("Swag1155", [
+      BASE_URI,
+      usdc.address,
+      treasury.account.address,
+      deployer.account.address, // initialAdmin
+    ]);
   });
 
   it("Initial configuration set correctly", async function () {
@@ -172,5 +177,149 @@ describe("Swag1155", async function () {
 
     const uri2 = await swag.read.uri([tokenId2]);
     assert(uri2.includes(BASE_URI) || uri2.includes("0000000000000000000000000000000000000000000000000000000000000193"));
+  });
+
+  // ==================== REDEMPTION TESTS ====================
+
+  it("User can redeem their NFT", async function () {
+    const tokenId = 501n;
+
+    // Setup: create variant and buy
+    await swag.write.setVariant([tokenId, USDC(10), 10n, true]);
+    await usdc.write.approve([swag.address, USDC(10)], { account: buyer.account });
+    await swag.write.buy([tokenId, 1n], { account: buyer.account });
+
+    // Check initial status is NotRedeemed (0)
+    const statusBefore = await swag.read.getRedemptionStatus([tokenId, buyer.account.address]);
+    assert.equal(statusBefore, 0); // NotRedeemed
+
+    // Redeem
+    await swag.write.redeem([tokenId], { account: buyer.account });
+
+    // Check status is PendingFulfillment (1)
+    const statusAfter = await swag.read.getRedemptionStatus([tokenId, buyer.account.address]);
+    assert.equal(statusAfter, 1); // PendingFulfillment
+  });
+
+  it("User cannot redeem if they don't own the NFT", async function () {
+    const tokenId = 502n;
+
+    // Setup: create variant but don't buy
+    await swag.write.setVariant([tokenId, USDC(10), 10n, true]);
+
+    // Try to redeem without owning
+    try {
+      await swag.write.redeem([tokenId], { account: buyer2.account });
+      assert.fail("Should revert for non-owner");
+    } catch (e: any) {
+      assert(e.message.includes("not owner"));
+    }
+  });
+
+  it("User cannot redeem same token twice", async function () {
+    const tokenId = 503n;
+
+    // Setup: create variant and buy
+    await swag.write.setVariant([tokenId, USDC(10), 10n, true]);
+    await usdc.write.approve([swag.address, USDC(10)], { account: buyer.account });
+    await swag.write.buy([tokenId, 1n], { account: buyer.account });
+
+    // First redemption should succeed
+    await swag.write.redeem([tokenId], { account: buyer.account });
+
+    // Second redemption should fail
+    try {
+      await swag.write.redeem([tokenId], { account: buyer.account });
+      assert.fail("Should revert for already redeemed");
+    } catch (e: any) {
+      assert(e.message.includes("already redeemed"));
+    }
+  });
+
+  it("Admin can mark redemption as fulfilled", async function () {
+    const tokenId = 504n;
+
+    // Setup: create variant, buy, and redeem
+    await swag.write.setVariant([tokenId, USDC(10), 10n, true]);
+    await usdc.write.approve([swag.address, USDC(10)], { account: buyer.account });
+    await swag.write.buy([tokenId, 1n], { account: buyer.account });
+    await swag.write.redeem([tokenId], { account: buyer.account });
+
+    // Verify status is PendingFulfillment
+    const statusBefore = await swag.read.getRedemptionStatus([tokenId, buyer.account.address]);
+    assert.equal(statusBefore, 1); // PendingFulfillment
+
+    // Admin marks as fulfilled
+    await swag.write.markFulfilled([tokenId, buyer.account.address]);
+
+    // Check status is Fulfilled (2)
+    const statusAfter = await swag.read.getRedemptionStatus([tokenId, buyer.account.address]);
+    assert.equal(statusAfter, 2); // Fulfilled
+  });
+
+  it("Non-admin cannot mark as fulfilled", async function () {
+    const tokenId = 505n;
+
+    // Setup: create variant, buy, and redeem
+    await swag.write.setVariant([tokenId, USDC(10), 10n, true]);
+    await usdc.write.approve([swag.address, USDC(10)], { account: buyer.account });
+    await swag.write.buy([tokenId, 1n], { account: buyer.account });
+    await swag.write.redeem([tokenId], { account: buyer.account });
+
+    // Non-admin tries to mark as fulfilled
+    try {
+      await swag.write.markFulfilled([tokenId, buyer.account.address], { account: buyer2.account });
+      assert.fail("Should revert for non-admin");
+    } catch (e: any) {
+      assert(e.message.includes("AccessControl"));
+    }
+  });
+
+  it("Cannot mark as fulfilled if not pending", async function () {
+    const tokenId = 506n;
+
+    // Setup: create variant and buy but DON'T redeem
+    await swag.write.setVariant([tokenId, USDC(10), 10n, true]);
+    await usdc.write.approve([swag.address, USDC(10)], { account: buyer.account });
+    await swag.write.buy([tokenId, 1n], { account: buyer.account });
+
+    // Try to mark as fulfilled without redemption request
+    try {
+      await swag.write.markFulfilled([tokenId, buyer.account.address]);
+      assert.fail("Should revert for not pending");
+    } catch (e: any) {
+      assert(e.message.includes("not pending"));
+    }
+  });
+
+  it("Full redemption flow: buy -> redeem -> fulfill", async function () {
+    const tokenId = 507n;
+
+    // Setup variant
+    await swag.write.setVariant([tokenId, USDC(20), 5n, true]);
+    await usdc.write.approve([swag.address, USDC(20)], { account: buyer2.account });
+
+    // Step 1: Buy
+    await swag.write.buy([tokenId, 1n], { account: buyer2.account });
+    const balance = await swag.read.balanceOf([buyer2.account.address, tokenId]);
+    assert.equal(balance, 1n);
+
+    // Step 2: Check initial status
+    let status = await swag.read.getRedemptionStatus([tokenId, buyer2.account.address]);
+    assert.equal(status, 0); // NotRedeemed
+
+    // Step 3: Redeem
+    await swag.write.redeem([tokenId], { account: buyer2.account });
+    status = await swag.read.getRedemptionStatus([tokenId, buyer2.account.address]);
+    assert.equal(status, 1); // PendingFulfillment
+
+    // Step 4: Admin fulfills
+    await swag.write.markFulfilled([tokenId, buyer2.account.address]);
+    status = await swag.read.getRedemptionStatus([tokenId, buyer2.account.address]);
+    assert.equal(status, 2); // Fulfilled
+
+    // User still owns the NFT (proof of purchase)
+    const finalBalance = await swag.read.balanceOf([buyer2.account.address, tokenId]);
+    assert.equal(finalBalance, 1n);
   });
 });

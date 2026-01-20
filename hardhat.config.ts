@@ -68,7 +68,32 @@ export default defineConfig({
   },
   verify: {
     etherscan: {
-      apiKey: configVariable("BASESCAN_API_KEY"),
+      apiKey: configVariable("ETHERSCAN_API_KEY"),
     },
+  },
+  etherscan: {
+    apiKey: {
+      mainnet: process.env.ETHERSCAN_API_KEY || "",
+      base: process.env.BASESCAN_API || "",
+      unichain: process.env.UNICHAIN_API_KEY || "",
+    },
+    customChains: [
+      {
+        network: "base",
+        chainId: 8453,
+        urls: {
+          apiURL: "https://api.basescan.org/api",
+          browserURL: "https://basescan.org",
+        },
+      },
+      {
+        network: "unichain",
+        chainId: 130,
+        urls: {
+          apiURL: "https://api.uniscan.xyz/api",
+          browserURL: "https://uniscan.xyz",
+        },
+      },
+    ],
   },
 });

@@ -21,7 +21,7 @@ interface NetworkConfig {
   chainId: number;
   contracts: {
     ZKPassportNFT: ContractInfo;
-    FaucetVault: ContractInfo;
+    FaucetManager: ContractInfo;
     Swag1155?: ContractInfo;
   };
 }
@@ -63,7 +63,7 @@ async function main() {
   };
 
   const nftABI = readABI("ZKPassportNFT");
-  const faucetABI = readABI("FaucetVault");
+  const faucetABI = readABI("FaucetManager");
   const swagABI = readABI("Swag1155");
 
   // Find all deployment directories
@@ -113,12 +113,13 @@ async function main() {
       continue;
     }
 
-    // Support multiple deployment module names
-    const nftAddress = 
+    // Support multiple deployment module names (FaucetManager is the new contract)
+    const nftAddress =
       deployedAddresses["CompleteSystem#ZKPassportNFT"] ||
       deployedAddresses["ZKPassportSystem#ZKPassportNFT"];
-    const faucetAddress = 
-      deployedAddresses["CompleteSystem#FaucetVault"] ||
+    const faucetAddress =
+      deployedAddresses["CompleteSystem#FaucetManager"] ||
+      deployedAddresses["CompleteSystem#FaucetVault"] ||  // Legacy support
       deployedAddresses["ZKPassportSystem#FaucetVault"];
     const swagAddress =
       deployedAddresses["CompleteSystem#Swag1155"] ||
@@ -126,7 +127,7 @@ async function main() {
       deployedAddresses["Swag1155#Swag1155"];
 
     if (!nftAddress || !faucetAddress) {
-      console.log(`   ⚠️  Missing ZKPassportNFT or FaucetVault - proceeding with available contracts`);
+      console.log(`   ⚠️  Missing ZKPassportNFT or FaucetManager - proceeding with available contracts`);
     }
 
     // Create network config
@@ -138,7 +139,7 @@ async function main() {
           address: nftAddress,
           abi: nftABI,
         },
-        FaucetVault: {
+        FaucetManager: {
           address: faucetAddress,
           abi: faucetABI,
         },
@@ -175,7 +176,7 @@ async function main() {
       chainId,
       addresses: {
         ZKPassportNFT: nftAddress,
-        FaucetVault: faucetAddress,
+        FaucetManager: faucetAddress,
         ...(swagAddress ? { Swag1155: swagAddress } : {}),
       },
     };
@@ -191,7 +192,8 @@ export const CONTRACTS = ${JSON.stringify(networkConfig, null, 2)} as const;
 
 export const ADDRESSES = {
   ZKPassportNFT: "${nftAddress}",
-  FaucetVault: "${faucetAddress}",
+  FaucetManager: "${faucetAddress}",
+  ${swagAddress ? `Swag1155: "${swagAddress}",` : ""}
 } as const;
 
 export const CHAIN_ID = ${chainId} as const;
@@ -201,7 +203,7 @@ export const NETWORK = "${networkName}" as const;
 
     console.log(`   ✅ Created files in frontend/${networkName}/`);
     console.log(`      - ZKPassportNFT: ${nftAddress}`);
-    console.log(`      - FaucetVault: ${faucetAddress}`);
+    console.log(`      - FaucetManager: ${faucetAddress}`);
     if (swagAddress) {
       console.log(`      - Swag1155: ${swagAddress}`);
     }
@@ -222,7 +224,7 @@ export const NETWORK = "${networkName}" as const;
       chainId: config.chainId,
       addresses: {
         ZKPassportNFT: config.contracts.ZKPassportNFT.address,
-        FaucetVault: config.contracts.FaucetVault.address,
+        FaucetManager: config.contracts.FaucetManager.address,
         ...(config.contracts.Swag1155 ? { Swag1155: config.contracts.Swag1155.address } : {}),
       },
     };
@@ -242,7 +244,7 @@ export const NETWORK = "${networkName}" as const;
     JSON.stringify(nftABI, null, 2)
   );
   writeFileSync(
-    join(abisDir, "FaucetVault.json"),
+    join(abisDir, "FaucetManager.json"),
     JSON.stringify(faucetABI, null, 2)
   );
   if (swagABI && swagABI.length) {
@@ -289,7 +291,8 @@ frontend/
 ├── contracts.ts           # TypeScript exports (multi-network)
 ├── abis/                  # Shared ABIs (same for all networks)
 │   ├── ZKPassportNFT.json
-│   └── FaucetVault.json
+│   ├── FaucetManager.json
+│   └── Swag1155.json
 ├── base/                  # Base Mainnet specific files
 │   ├── contracts.json
 │   ├── addresses.json
@@ -307,15 +310,22 @@ frontend/
 \`\`\`typescript
 import { getAddresses, getContracts, DEFAULT_NETWORK } from './contracts';
 import ZKPassportNFT_ABI from './abis/ZKPassportNFT.json';
+import FaucetManager_ABI from './abis/FaucetManager.json';
 
 // Get addresses for a specific network
 const baseAddresses = getAddresses('base');
 const unichainAddresses = getAddresses('unichain');
 
 // Use with ethers.js
-const contract = new ethers.Contract(
+const nftContract = new ethers.Contract(
   baseAddresses.addresses.ZKPassportNFT,
   ZKPassportNFT_ABI,
+  signer
+);
+
+const faucetContract = new ethers.Contract(
+  baseAddresses.addresses.FaucetManager,
+  FaucetManager_ABI,
   signer
 );
 \`\`\`
@@ -340,13 +350,13 @@ import ZKPassportNFT_ABI from './abis/ZKPassportNFT.json';
 function MyComponent({ chainId }: { chainId: number }) {
   const network = chainId === 8453 ? 'base' : chainId === 130 ? 'unichain' : 'base';
   const addresses = getAddresses(network);
-  
+
   const { data } = useContractRead({
     address: addresses.addresses.ZKPassportNFT,
     abi: ZKPassportNFT_ABI,
     functionName: 'totalSupply',
   });
-  
+
   return <div>Total Supply: {data?.toString()}</div>;
 }
 \`\`\`

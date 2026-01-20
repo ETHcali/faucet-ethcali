@@ -15,8 +15,12 @@ describe("ZKPassportNFT", async function () {
     deployerAddress = deployer.account.address;
     userAddress = user.account.address;
 
-    // Deploy NFT contract
-    nftContract = await viem.deployContract("ZKPassportNFT", ["ZKPassport", "ZKP"]);
+    // Deploy NFT contract with deployer as initial owner
+    nftContract = await viem.deployContract("ZKPassportNFT", [
+      "ZKPassport",
+      "ZKP",
+      deployerAddress, // initialOwner
+    ]);
   });
 
   it("Should deploy with correct name and symbol", async function () {

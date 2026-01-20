@@ -2,8 +2,8 @@
 
 **Production-Ready implementation guide** for the Swag1155 ERC-1155 contract frontend. This is your complete reference for building the admin panel and user store.
 
-**Version**: 2.0 - Complete Implementation  
-**Last Updated**: January 2026  
+**Version**: 2.1 - Complete Implementation with Redemption Flow
+**Last Updated**: January 2026
 **Frameworks**: React 18+ with Wagmi v2 + Viem + TanStack Query
 
 ---
@@ -16,10 +16,11 @@
 4. [User: Store & Purchasing System](#user-store--purchasing-system)
 5. [Production Components](#production-components)
 6. [Advanced: Cart & Batch Operations](#advanced-cart--batch-operations)
-7. [Error Handling & State Management](#error-handling--state-management)
-8. [Contract Integration Reference](#contract-integration-reference)
-9. [Testing Checklist](#testing-checklist)
-10. [Troubleshooting Guide](#troubleshooting-guide)
+7. [Redemption: Physical Swag Claim Flow](#redemption-physical-swag-claim-flow)
+8. [Error Handling & State Management](#error-handling--state-management)
+9. [Contract Integration Reference](#contract-integration-reference)
+10. [Testing Checklist](#testing-checklist)
+11. [Troubleshooting Guide](#troubleshooting-guide)
 
 ---
 
@@ -46,6 +47,7 @@ Swag1155 is an ERC-1155 smart contract managing product variants with USDC payme
 | **Image URI** | IPFS image location | `ipfs://QmYYY...` |
 | **Supply** | Max mintable per variant | `5` (e.g., 20 total ÷ 4 sizes) |
 | **Price** | Cost in USDC base units | `25000000` = 25 USDC |
+| **RedemptionStatus** | NFT claim state | `0=NotRedeemed`, `1=PendingFulfillment`, `2=Fulfilled` |
 
 ### Responsibilities
 
@@ -57,6 +59,9 @@ Swag1155 is an ERC-1155 smart contract managing product variants with USDC payme
 | **Contract Calls** | ✓ (setVariantWithURI) | ✓ (buy) | ✓ (stores data) |
 | **USDC Approval** | ✗ | ✓ | ✓ (transfers) |
 | **NFT Minting** | ✗ | ✓ | ✓ |
+| **Redemption Request** | ✗ | ✓ (redeem) | ✓ (tracks status) |
+| **Shipping Collection** | ✗ | ✓ (off-chain) | ✗ |
+| **Fulfillment Verify** | ✓ (markFulfilled) | ✗ | ✓ (updates status) |
 
 ---
 
@@ -207,6 +212,19 @@ export interface Swag1155Metadata {
     trait_type: 'Product' | 'Color' | 'Gender' | 'Style' | 'Size';
     value: string;
   }>;
+}
+
+// Redemption status enum (mirrors contract)
+export enum RedemptionStatus {
+  NotRedeemed = 0,
+  PendingFulfillment = 1,
+  Fulfilled = 2,
+}
+
+export interface RedemptionInfo {
+  tokenId: bigint;
+  owner: string;
+  status: RedemptionStatus;
 }
 ```
 
@@ -900,6 +918,474 @@ export function StorePage() {
 
 ---
 
+## Redemption: Physical Swag Claim Flow
+
+Complete system for users to redeem physical merchandise with their NFT, and admins to verify fulfillment.
+
+### Redemption Flow Overview
+
+```
+┌─────────────────┐     ┌──────────────────────┐     ┌─────────────┐
+│  NotRedeemed    │ ──▶ │  PendingFulfillment  │ ──▶ │  Fulfilled  │
+│  (User owns NFT)│     │  (Claim requested)   │     │  (Shipped)  │
+└─────────────────┘     └──────────────────────┘     └─────────────┘
+                                │                          │
+                         User: redeem()           Admin: markFulfilled()
+                         + Backend collects        (verifies shipment)
+                           shipping address
+```
+
+### Step 1: Redemption Hooks
+
+Create `src/hooks/useRedemption.ts`:
+
+```typescript
+import { useReadContract, useWriteContract } from 'wagmi';
+import { useAccount } from 'wagmi';
+import Swag1155ABI from '../abis/Swag1155.json';
+import { useSwagAddresses } from '../utils/network';
+import { RedemptionStatus } from '../types/product';
+
+// Get redemption status for a user's NFT
+export function useRedemptionStatus(tokenId: bigint, owner?: string) {
+  const { swag1155 } = useSwagAddresses();
+  const { address } = useAccount();
+  const ownerAddress = owner || address;
+
+  const { data, isLoading, error, refetch } = useReadContract({
+    address: swag1155,
+    abi: Swag1155ABI,
+    functionName: 'getRedemptionStatus',
+    args: [tokenId, ownerAddress],
+    query: { enabled: !!ownerAddress },
+  });
+
+  return {
+    status: (data as number) ?? RedemptionStatus.NotRedeemed,
+    statusLabel: getStatusLabel(data as number),
+    isLoading,
+    error: error?.message || null,
+    refetch,
+  };
+}
+
+// User requests redemption
+export function useRedeem() {
+  const { swag1155 } = useSwagAddresses();
+  const { writeContractAsync, isPending, error } = useWriteContract();
+
+  const redeem = async (tokenId: bigint) => {
+    return writeContractAsync({
+      address: swag1155,
+      abi: Swag1155ABI,
+      functionName: 'redeem',
+      args: [tokenId],
+    });
+  };
+
+  return { redeem, isPending, error: error?.message || null };
+}
+
+// Admin marks redemption as fulfilled
+export function useMarkFulfilled() {
+  const { swag1155 } = useSwagAddresses();
+  const { writeContractAsync, isPending, error } = useWriteContract();
+
+  const markFulfilled = async (tokenId: bigint, owner: string) => {
+    return writeContractAsync({
+      address: swag1155,
+      abi: Swag1155ABI,
+      functionName: 'markFulfilled',
+      args: [tokenId, owner],
+    });
+  };
+
+  return { markFulfilled, isPending, error: error?.message || null };
+}
+
+// Helper to get human-readable status
+function getStatusLabel(status: number): string {
+  switch (status) {
+    case RedemptionStatus.NotRedeemed:
+      return 'Not Redeemed';
+    case RedemptionStatus.PendingFulfillment:
+      return 'Pending Fulfillment';
+    case RedemptionStatus.Fulfilled:
+      return 'Fulfilled';
+    default:
+      return 'Unknown';
+  }
+}
+```
+
+### Step 2: User Redemption Component
+
+Create `src/components/RedeemButton.tsx`:
+
+```typescript
+import React, { useState } from 'react';
+import { useAccount } from 'wagmi';
+import { useRedemptionStatus, useRedeem } from '../hooks/useRedemption';
+import { RedemptionStatus } from '../types/product';
+import './RedeemButton.css';
+
+interface RedeemButtonProps {
+  tokenId: bigint;
+  onRedeemSuccess?: () => void;
+}
+
+export function RedeemButton({ tokenId, onRedeemSuccess }: RedeemButtonProps) {
+  const { address, isConnected } = useAccount();
+  const { status, statusLabel, refetch } = useRedemptionStatus(tokenId);
+  const { redeem, isPending, error } = useRedeem();
+  const [showShippingModal, setShowShippingModal] = useState(false);
+
+  if (!isConnected) {
+    return <button disabled>Connect Wallet</button>;
+  }
+
+  const handleRedeem = async () => {
+    try {
+      await redeem(tokenId);
+      setShowShippingModal(true); // Prompt user to submit shipping info
+      refetch();
+      onRedeemSuccess?.();
+    } catch (err) {
+      console.error('Redemption failed:', err);
+    }
+  };
+
+  // Already fulfilled
+  if (status === RedemptionStatus.Fulfilled) {
+    return (
+      <div className="redemption-status fulfilled">
+        <span className="status-icon">✅</span>
+        <span>Shipped</span>
+      </div>
+    );
+  }
+
+  // Pending fulfillment
+  if (status === RedemptionStatus.PendingFulfillment) {
+    return (
+      <div className="redemption-status pending">
+        <span className="status-icon">📦</span>
+        <span>Awaiting Shipment</span>
+      </div>
+    );
+  }
+
+  // Not redeemed - show redeem button
+  return (
+    <>
+      <button
+        onClick={handleRedeem}
+        disabled={isPending}
+        className="btn btn-redeem"
+      >
+        {isPending ? 'Redeeming...' : 'Redeem Physical Item'}
+      </button>
+
+      {error && <p className="error">{error}</p>}
+
+      {showShippingModal && (
+        <ShippingModal
+          tokenId={tokenId}
+          onClose={() => setShowShippingModal(false)}
+        />
+      )}
+    </>
+  );
+}
+
+// Modal to collect shipping address (sends to backend)
+function ShippingModal({ tokenId, onClose }: { tokenId: bigint; onClose: () => void }) {
+  const { address } = useAccount();
+  const [form, setForm] = useState({
+    name: '',
+    street: '',
+    city: '',
+    country: '',
+    postalCode: '',
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+
+    try {
+      // Send to your backend API (not on-chain - sensitive data)
+      await fetch('/api/shipping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tokenId: tokenId.toString(),
+          wallet: address,
+          shipping: form,
+        }),
+      });
+
+      alert('✅ Shipping info submitted! You will receive your item soon.');
+      onClose();
+    } catch (err) {
+      alert('Failed to submit shipping info');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal">
+        <h3>Enter Shipping Address</h3>
+        <p className="info">Your NFT has been marked for redemption. Please provide your shipping details.</p>
+
+        <form onSubmit={handleSubmit}>
+          <input
+            type="text"
+            placeholder="Full Name"
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            required
+          />
+          <input
+            type="text"
+            placeholder="Street Address"
+            value={form.street}
+            onChange={(e) => setForm({ ...form, street: e.target.value })}
+            required
+          />
+          <input
+            type="text"
+            placeholder="City"
+            value={form.city}
+            onChange={(e) => setForm({ ...form, city: e.target.value })}
+            required
+          />
+          <input
+            type="text"
+            placeholder="Country"
+            value={form.country}
+            onChange={(e) => setForm({ ...form, country: e.target.value })}
+            required
+          />
+          <input
+            type="text"
+            placeholder="Postal Code"
+            value={form.postalCode}
+            onChange={(e) => setForm({ ...form, postalCode: e.target.value })}
+            required
+          />
+
+          <div className="modal-actions">
+            <button type="button" onClick={onClose} disabled={isSubmitting}>
+              Cancel
+            </button>
+            <button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? 'Submitting...' : 'Submit'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+```
+
+### Step 3: Admin Fulfillment Dashboard
+
+Create `src/components/AdminRedemptions.tsx`:
+
+```typescript
+import React, { useState } from 'react';
+import { useAccount } from 'wagmi';
+import { useMarkFulfilled } from '../hooks/useRedemption';
+import './AdminRedemptions.css';
+
+interface PendingRedemption {
+  tokenId: bigint;
+  owner: string;
+  productName: string;
+  requestedAt: string;
+  shippingInfo?: {
+    name: string;
+    street: string;
+    city: string;
+    country: string;
+    postalCode: string;
+  };
+}
+
+export function AdminRedemptions() {
+  const { address } = useAccount();
+  const { markFulfilled, isPending } = useMarkFulfilled();
+  const [processingId, setProcessingId] = useState<string | null>(null);
+
+  // Fetch pending redemptions from backend
+  // In production: useQuery to fetch from your API
+  const [redemptions, setRedemptions] = useState<PendingRedemption[]>([]);
+
+  const handleMarkFulfilled = async (redemption: PendingRedemption) => {
+    const key = `${redemption.tokenId}-${redemption.owner}`;
+    setProcessingId(key);
+
+    try {
+      await markFulfilled(redemption.tokenId, redemption.owner);
+
+      // Update backend status
+      await fetch('/api/admin/fulfillment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tokenId: redemption.tokenId.toString(),
+          owner: redemption.owner,
+          fulfilledBy: address,
+        }),
+      });
+
+      // Remove from list
+      setRedemptions((prev) =>
+        prev.filter((r) => !(r.tokenId === redemption.tokenId && r.owner === redemption.owner))
+      );
+
+      alert('✅ Marked as fulfilled!');
+    } catch (err) {
+      alert('Failed to mark as fulfilled');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  return (
+    <div className="admin-redemptions">
+      <h2>Pending Redemptions</h2>
+
+      {redemptions.length === 0 ? (
+        <p className="empty">No pending redemptions</p>
+      ) : (
+        <table className="redemptions-table">
+          <thead>
+            <tr>
+              <th>Token ID</th>
+              <th>Product</th>
+              <th>Owner</th>
+              <th>Shipping</th>
+              <th>Requested</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {redemptions.map((r) => {
+              const key = `${r.tokenId}-${r.owner}`;
+              const isProcessing = processingId === key;
+
+              return (
+                <tr key={key}>
+                  <td>{r.tokenId.toString()}</td>
+                  <td>{r.productName}</td>
+                  <td className="address">{r.owner.slice(0, 6)}...{r.owner.slice(-4)}</td>
+                  <td>
+                    {r.shippingInfo ? (
+                      <details>
+                        <summary>View</summary>
+                        <div className="shipping-details">
+                          <p>{r.shippingInfo.name}</p>
+                          <p>{r.shippingInfo.street}</p>
+                          <p>{r.shippingInfo.city}, {r.shippingInfo.postalCode}</p>
+                          <p>{r.shippingInfo.country}</p>
+                        </div>
+                      </details>
+                    ) : (
+                      <span className="warning">Missing</span>
+                    )}
+                  </td>
+                  <td>{r.requestedAt}</td>
+                  <td>
+                    <button
+                      onClick={() => handleMarkFulfilled(r)}
+                      disabled={isProcessing || isPending}
+                      className="btn btn-fulfill"
+                    >
+                      {isProcessing ? 'Processing...' : 'Mark Shipped'}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+```
+
+### Step 4: Update Admin Dashboard
+
+Add redemption tab to `AdminDashboard.tsx`:
+
+```typescript
+import { AdminRedemptions } from '../components/AdminRedemptions';
+
+// In the tabs section:
+<button
+  className={`tab ${activeTab === 'redemptions' ? 'active' : ''}`}
+  onClick={() => setActiveTab('redemptions')}
+>
+  Redemptions
+</button>
+
+// In the content section:
+{activeTab === 'redemptions' && <AdminRedemptions />}
+```
+
+### Step 5: Listen to Redemption Events
+
+Create `src/hooks/useRedemptionEvents.ts`:
+
+```typescript
+import { useWatchContractEvent } from 'wagmi';
+import Swag1155ABI from '../abis/Swag1155.json';
+import { useSwagAddresses } from '../utils/network';
+
+export function useRedemptionEvents(onRedemptionRequested?: (owner: string, tokenId: bigint) => void) {
+  const { swag1155 } = useSwagAddresses();
+
+  useWatchContractEvent({
+    address: swag1155,
+    abi: Swag1155ABI,
+    eventName: 'RedemptionRequested',
+    onLogs(logs) {
+      logs.forEach((log) => {
+        const { owner, tokenId } = log.args as { owner: string; tokenId: bigint };
+        console.log(`Redemption requested: ${owner} for token ${tokenId}`);
+        onRedemptionRequested?.(owner, tokenId);
+      });
+    },
+  });
+}
+
+export function useFulfillmentEvents(onFulfilled?: (owner: string, tokenId: bigint, admin: string) => void) {
+  const { swag1155 } = useSwagAddresses();
+
+  useWatchContractEvent({
+    address: swag1155,
+    abi: Swag1155ABI,
+    eventName: 'RedemptionFulfilled',
+    onLogs(logs) {
+      logs.forEach((log) => {
+        const { owner, tokenId, admin } = log.args as { owner: string; tokenId: bigint; admin: string };
+        console.log(`Redemption fulfilled: ${owner} for token ${tokenId} by ${admin}`);
+        onFulfilled?.(owner, tokenId, admin);
+      });
+    },
+  });
+}
+```
+
+---
+
 ## Error Handling & State Management
 
 ### Error Boundary Component
@@ -952,7 +1438,7 @@ function setVariantWithURI(
   uint256 maxSupply,
   bool active,
   string memory tokenURI
-) external onlyOwner
+) external onlyRole(ADMIN_ROLE)
 
 // User - Buy single
 function buy(uint256 tokenId, uint256 quantity) external
@@ -973,15 +1459,44 @@ function variants(uint256 tokenId) external view returns (
 
 // View - Get metadata URI
 function uri(uint256 tokenId) external view returns (string memory)
+
+// ---------- Redemption Functions ----------
+
+// User - Request redemption for physical swag
+function redeem(uint256 tokenId) external
+// Requires: caller owns NFT, status == NotRedeemed
+// Emits: RedemptionRequested(owner, tokenId)
+
+// Admin - Mark redemption as fulfilled after verifying shipment
+function markFulfilled(uint256 tokenId, address owner) external onlyRole(ADMIN_ROLE)
+// Requires: status == PendingFulfillment
+// Emits: RedemptionFulfilled(owner, tokenId, admin)
+
+// View - Get redemption status
+function getRedemptionStatus(uint256 tokenId, address owner) external view returns (RedemptionStatus)
+// Returns: 0 = NotRedeemed, 1 = PendingFulfillment, 2 = Fulfilled
+
+// Public mapping - Direct status lookup
+mapping(uint256 => mapping(address => RedemptionStatus)) public redemptions;
+```
+
+### Redemption Events
+
+```typescript
+event RedemptionRequested(address indexed owner, uint256 indexed tokenId);
+event RedemptionFulfilled(address indexed owner, uint256 indexed tokenId, address indexed admin);
 ```
 
 ---
 
 ## Testing Checklist
 
+### Product Creation (Admin)
 - [ ] Admin can upload image to IPFS
 - [ ] Admin can create product with all sizes
 - [ ] Product variants appear on blockchain within seconds
+
+### Store & Purchasing (User)
 - [ ] User can browse store with filters
 - [ ] User can approve USDC
 - [ ] User can purchase single NFT
@@ -990,12 +1505,31 @@ function uri(uint256 tokenId) external view returns (string memory)
 - [ ] Metadata displays correctly on OpenSea/explorers
 - [ ] Supply decreases after purchase
 - [ ] Out-of-stock products show disabled state
+
+### Redemption Flow
+- [ ] User can see "Redeem Physical Item" button on owned NFT
+- [ ] User can call `redeem()` successfully
+- [ ] Status changes to "Pending Fulfillment" after redemption
+- [ ] Shipping modal appears after successful redemption
+- [ ] Shipping info is sent to backend API
+- [ ] Admin can view pending redemptions list
+- [ ] Admin can see shipping details for each redemption
+- [ ] Admin can call `markFulfilled()` successfully
+- [ ] Status changes to "Fulfilled" after admin confirms
+- [ ] User sees "Shipped" status on their NFT
+- [ ] RedemptionRequested event is emitted correctly
+- [ ] RedemptionFulfilled event is emitted correctly
+- [ ] User cannot redeem same NFT twice (blocked by contract)
+
+### General
 - [ ] Error messages display helpful text
 - [ ] Works on Base, Ethereum, Unichain
 
 ---
 
 ## Troubleshooting Guide
+
+### Purchase Issues
 
 | Issue | Solution |
 |-------|----------|
@@ -1008,6 +1542,19 @@ function uri(uint256 tokenId) external view returns (string memory)
 | "Image upload stuck" | Check Pinata JWT is valid; network connection stable |
 | "NFT not appearing in wallet" | Wait 30 seconds; refresh wallet; check correct network |
 | "Wrong network" | Ensure wallet is on Base/Ethereum/Unichain |
+
+### Redemption Issues
+
+| Issue | Solution |
+|-------|----------|
+| "not owner" | User must own the NFT to redeem; check balanceOf |
+| "already redeemed" | NFT already redeemed; status is PendingFulfillment or Fulfilled |
+| "not pending" | Admin can only mark as fulfilled if status is PendingFulfillment |
+| Redeem button not showing | Check user owns NFT; check redemption status isn't already redeemed |
+| Shipping modal not appearing | Check redeem() transaction succeeded; check state update |
+| Shipping API failed | Check backend `/api/shipping` endpoint is running |
+| Admin can't see redemptions | Check backend API returns pending redemptions; check admin role |
+| markFulfilled failed | Ensure caller has ADMIN_ROLE; ensure status is PendingFulfillment |
 
 ---
 
@@ -1041,6 +1588,54 @@ ipfs://Qm...
 https://gateway.pinata.cloud/ipfs/Qm...
 ```
 
+### Redemption Status Check
+```typescript
+import { RedemptionStatus } from '../types/product';
+
+// Check if user can redeem
+const canRedeem = (status: RedemptionStatus, ownsNFT: boolean): boolean => {
+  return ownsNFT && status === RedemptionStatus.NotRedeemed;
+};
+
+// Get status display
+const getStatusDisplay = (status: RedemptionStatus) => {
+  switch (status) {
+    case RedemptionStatus.NotRedeemed:
+      return { label: 'Not Redeemed', icon: '🎁', color: 'gray' };
+    case RedemptionStatus.PendingFulfillment:
+      return { label: 'Awaiting Shipment', icon: '📦', color: 'yellow' };
+    case RedemptionStatus.Fulfilled:
+      return { label: 'Shipped', icon: '✅', color: 'green' };
+  }
+};
+```
+
+### Backend API Endpoints (Required)
+```typescript
+// POST /api/shipping - User submits shipping info
+{
+  tokenId: string;
+  wallet: string;
+  shipping: {
+    name: string;
+    street: string;
+    city: string;
+    country: string;
+    postalCode: string;
+  };
+}
+
+// GET /api/admin/redemptions - Admin fetches pending redemptions
+// Returns: PendingRedemption[]
+
+// POST /api/admin/fulfillment - Admin marks as fulfilled
+{
+  tokenId: string;
+  owner: string;
+  fulfilledBy: string;
+}
+```
+
 ---
 
 ## Next Steps for Frontend Team
@@ -1048,15 +1643,19 @@ https://gateway.pinata.cloud/ipfs/Qm...
 1. **Setup Environment**: Copy `.env.local` template, fill in addresses
 2. **Implement Admin**: Create ProductForm + ProductsList
 3. **Implement Store**: Create ProductCard + StorePage
-4. **Connect Wallet**: Integrate your wallet solution (Privy, Rainbow, etc.)
-5. **Testing**: Test all flows on testnet (Base Sepolia, etc.)
-6. **Deployment**: Deploy frontend to Vercel/Netlify
-7. **Go Live**: Deploy on mainnet with real contract addresses
+4. **Implement Redemption**: Create RedeemButton + ShippingModal + AdminRedemptions
+5. **Setup Backend**: Create `/api/shipping` and `/api/admin/redemptions` endpoints
+6. **Connect Wallet**: Integrate your wallet solution (Privy, Rainbow, etc.)
+7. **Testing**: Test all flows on testnet (Base Sepolia, etc.)
+8. **Deployment**: Deploy frontend to Vercel/Netlify
+9. **Go Live**: Deploy on mainnet with real contract addresses
 
 ---
 
 ## Support & Questions
 
+- **Contract API Reference**: Check [docs/SWAG1155_CONTRACT_REFERENCE.md](docs/SWAG1155_CONTRACT_REFERENCE.md) - Full documentation of all functions, parameters, and UI mapping
+- **All Contract Docs**: See [docs/README.md](docs/README.md) - Hub for all contract documentation
 - **Contract Issues**: Check [SWAG1155_DEPLOYMENT.md](SWAG1155_DEPLOYMENT.md)
 - **Backend Integration**: See [SWAG1155_IMPLEMENTATION_SUMMARY.md](SWAG1155_IMPLEMENTATION_SUMMARY.md)
-- **Contract ABI**: [contracts/Swag1155.sol](contracts/Swag1155.sol)
+- **Contract Source**: [contracts/Swag1155.sol](contracts/Swag1155.sol)

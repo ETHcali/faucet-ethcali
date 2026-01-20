@@ -25,6 +25,13 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
         bool active;        // Sale status
     }
 
+    // Redemption status for physical swag
+    enum RedemptionStatus {
+        NotRedeemed,        // User hasn't claimed yet
+        PendingFulfillment, // User claimed, waiting for admin to verify shipment
+        Fulfilled           // Admin verified shipment complete
+    }
+
     // Payment token (USDC)
     address public usdc;
 
@@ -36,6 +43,9 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
 
     // Per-token metadata URIs (for dynamic product creation)
     mapping(uint256 => string) private _tokenURIs;
+
+    // Redemption tracking: tokenId => owner => status
+    mapping(uint256 => mapping(address => RedemptionStatus)) public redemptions;
 
     // Track known tokenIds for optional iteration (not required but helpful)
     using EnumerableSet for EnumerableSet.UintSet;
@@ -50,17 +60,30 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
     event USDCUpdated(address indexed newUSDC);
     event AdminAdded(address indexed admin);
     event AdminRemoved(address indexed admin);
+    event RedemptionRequested(address indexed owner, uint256 indexed tokenId);
+    event RedemptionFulfilled(address indexed owner, uint256 indexed tokenId, address indexed admin);
 
-    constructor(string memory baseURI, address _usdc, address _treasury) ERC1155(baseURI) {
+    /**
+     * @notice Constructor
+     * @param baseURI Base URI for token metadata
+     * @param _usdc USDC token address
+     * @param _treasury Treasury address for payments
+     * @param initialAdmin Address to set as admin (use address(0) for deployer)
+     */
+    constructor(
+        string memory baseURI,
+        address _usdc,
+        address _treasury,
+        address initialAdmin
+    ) ERC1155(baseURI) {
         require(_usdc != address(0), "invalid USDC");
         require(_treasury != address(0), "invalid treasury");
         usdc = _usdc;
         treasury = _treasury;
 
-        // Grant deployer the default admin role (can manage other roles)
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        // Grant deployer the admin role (can manage products)
-        _grantRole(ADMIN_ROLE, msg.sender);
+        address admin = initialAdmin == address(0) ? msg.sender : initialAdmin;
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(ADMIN_ROLE, admin);
     }
 
     // ---------- Admin Management ----------
@@ -185,6 +208,39 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
             return tokenURI;
         }
         return super.uri(tokenId);
+    }
+
+    /**
+     * @notice Get redemption status for a specific owner and tokenId
+     */
+    function getRedemptionStatus(uint256 tokenId, address owner) external view returns (RedemptionStatus) {
+        return redemptions[tokenId][owner];
+    }
+
+    // ---------- Redemption ----------
+
+    /**
+     * @notice User requests redemption of physical swag for their NFT
+     * @dev User must own at least 1 of the tokenId. Shipping info collected off-chain.
+     */
+    function redeem(uint256 tokenId) external {
+        require(balanceOf(msg.sender, tokenId) > 0, "not owner");
+        require(redemptions[tokenId][msg.sender] == RedemptionStatus.NotRedeemed, "already redeemed");
+
+        redemptions[tokenId][msg.sender] = RedemptionStatus.PendingFulfillment;
+        emit RedemptionRequested(msg.sender, tokenId);
+    }
+
+    /**
+     * @notice Admin marks redemption as fulfilled after verifying shipment
+     * @param tokenId The token being redeemed
+     * @param owner The address that requested redemption
+     */
+    function markFulfilled(uint256 tokenId, address owner) external onlyRole(ADMIN_ROLE) {
+        require(redemptions[tokenId][owner] == RedemptionStatus.PendingFulfillment, "not pending");
+
+        redemptions[tokenId][owner] = RedemptionStatus.Fulfilled;
+        emit RedemptionFulfilled(owner, tokenId, msg.sender);
     }
 
     // ---------- Purchases ----------

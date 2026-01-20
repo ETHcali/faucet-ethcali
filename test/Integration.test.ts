@@ -21,8 +21,12 @@ describe("Integration Tests", async function () {
     user2Address = user2.account.address;
     claimAmount = parseEther("0.01");
 
-    // Deploy NFT contract
-    nftContract = await viem.deployContract("ZKPassportNFT", ["ZKPassport", "ZKP"]);
+    // Deploy NFT contract with deployer as initial owner
+    nftContract = await viem.deployContract("ZKPassportNFT", [
+      "ZKPassport",
+      "ZKP",
+      deployerAddress, // initialOwner
+    ]);
 
     // Deploy FaucetVault
     faucetVault = await viem.deployContract("FaucetVault", [
