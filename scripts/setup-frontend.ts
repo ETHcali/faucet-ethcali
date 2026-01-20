@@ -7,9 +7,25 @@ const __dirname = dirname(__filename);
 
 /**
  * Script to extract ABIs and addresses for frontend integration
- * Generates files for all deployed networks (Base, Unichain, etc.)
+ * Reads from deployments/{network}-latest.json files
  * Usage: npx hardhat run scripts/setup-frontend.ts
  */
+
+interface DeploymentResult {
+  zkPassportNFT: string;
+  faucetManager: string;
+  swag1155: string;
+  network: string;
+  timestamp: string;
+  config: {
+    network: string;
+    superAdmin: string;
+    zkpassportOwner: string;
+    faucetAdmin: string;
+    swagTreasury: string;
+    usdcAddress: string;
+  };
+}
 
 interface ContractInfo {
   address: string;
@@ -22,7 +38,7 @@ interface NetworkConfig {
   contracts: {
     ZKPassportNFT: ContractInfo;
     FaucetManager: ContractInfo;
-    Swag1155?: ContractInfo;
+    Swag1155: ContractInfo;
   };
 }
 
@@ -31,22 +47,22 @@ interface MultiNetworkConfig {
   defaultNetwork?: string;
 }
 
-const CHAIN_IDS_TO_NETWORK: Record<number, string> = {
-  8453: "base",
-  1: "ethereum",
-  130: "unichain",
-  31337: "hardhatMainnet",
+const NETWORK_CHAIN_IDS: Record<string, number> = {
+  base: 8453,
+  ethereum: 1,
+  unichain: 130,
 };
 
 const NETWORK_NAMES: Record<string, string> = {
   base: "Base Mainnet",
   ethereum: "Ethereum Mainnet",
   unichain: "Unichain Mainnet",
-  hardhatMainnet: "Hardhat Local",
 };
 
+const SUPPORTED_NETWORKS = ["base", "ethereum", "unichain"];
+
 async function main() {
-  console.log("🚀 Setting up frontend files for all deployed networks...\n");
+  console.log("🚀 Setting up frontend files from deployments...\n");
 
   // Read ABIs from artifacts (same for all networks)
   const artifactsDir = join(__dirname, "../artifacts/contracts");
@@ -66,22 +82,18 @@ async function main() {
   const faucetABI = readABI("FaucetManager");
   const swagABI = readABI("Swag1155");
 
-  // Find all deployment directories
-  const deploymentsDir = join(__dirname, "../ignition/deployments");
-  const chainDirs = readdirSync(deploymentsDir)
-    .filter((d) => d.startsWith("chain-"))
-    .map((d) => {
-      const chainId = parseInt(d.replace("chain-", ""));
-      return { chainId, dir: d };
-    })
-    .filter(({ chainId }) => !isNaN(chainId));
-
-  if (chainDirs.length === 0) {
-    console.error("No deployment directories found. Deploy contracts first.");
+  if (!nftABI.length || !faucetABI.length || !swagABI.length) {
+    console.error("❌ Missing ABIs. Run 'npm run compile' first.");
     process.exit(1);
   }
 
-  console.log(`Found ${chainDirs.length} deployed network(s):\n`);
+  // Find all deployment files
+  const deploymentsDir = join(__dirname, "../deployments");
+
+  if (!existsSync(deploymentsDir)) {
+    console.error("❌ Deployments directory not found. Deploy contracts first.");
+    process.exit(1);
+  }
 
   const multiNetworkConfig: MultiNetworkConfig = {
     networks: {},
@@ -90,44 +102,26 @@ async function main() {
   const outputDir = join(__dirname, "../frontend");
   mkdirSync(outputDir, { recursive: true });
 
-  // Process each network
-  for (const { chainId, dir } of chainDirs) {
-    const networkName = CHAIN_IDS_TO_NETWORK[chainId] || `chain-${chainId}`;
+  // Process each supported network
+  for (const networkName of SUPPORTED_NETWORKS) {
+    const deploymentPath = join(deploymentsDir, `${networkName}-latest.json`);
+
+    if (!existsSync(deploymentPath)) {
+      console.log(`⚠️  No deployment found for ${networkName} - skipping`);
+      continue;
+    }
+
     const networkDisplayName = NETWORK_NAMES[networkName] || networkName;
+    const chainId = NETWORK_CHAIN_IDS[networkName];
 
     console.log(`📦 Processing ${networkDisplayName} (Chain ID: ${chainId})...`);
 
-    const addressesPath = join(deploymentsDir, dir, "deployed_addresses.json");
-
-    if (!existsSync(addressesPath)) {
-      console.log(`   ⚠️  Skipping - no deployed_addresses.json found\n`);
-      continue;
-    }
-
-    let deployedAddresses: Record<string, string>;
+    let deployment: DeploymentResult;
     try {
-      const addressesContent = readFileSync(addressesPath, "utf-8");
-      deployedAddresses = JSON.parse(addressesContent);
+      deployment = JSON.parse(readFileSync(deploymentPath, "utf-8"));
     } catch (error) {
-      console.log(`   ⚠️  Skipping - error reading addresses\n`);
+      console.log(`   ⚠️  Error reading deployment file - skipping\n`);
       continue;
-    }
-
-    // Support multiple deployment module names (FaucetManager is the new contract)
-    const nftAddress =
-      deployedAddresses["CompleteSystem#ZKPassportNFT"] ||
-      deployedAddresses["ZKPassportSystem#ZKPassportNFT"];
-    const faucetAddress =
-      deployedAddresses["CompleteSystem#FaucetManager"] ||
-      deployedAddresses["CompleteSystem#FaucetVault"] ||  // Legacy support
-      deployedAddresses["ZKPassportSystem#FaucetVault"];
-    const swagAddress =
-      deployedAddresses["CompleteSystem#Swag1155"] ||
-      deployedAddresses["Swag1155System#Swag1155"] ||
-      deployedAddresses["Swag1155#Swag1155"];
-
-    if (!nftAddress || !faucetAddress) {
-      console.log(`   ⚠️  Missing ZKPassportNFT or FaucetManager - proceeding with available contracts`);
     }
 
     // Create network config
@@ -136,21 +130,17 @@ async function main() {
       chainId,
       contracts: {
         ZKPassportNFT: {
-          address: nftAddress,
+          address: deployment.zkPassportNFT,
           abi: nftABI,
         },
         FaucetManager: {
-          address: faucetAddress,
+          address: deployment.faucetManager,
           abi: faucetABI,
         },
-        ...(swagAddress
-          ? {
-              Swag1155: {
-                address: swagAddress,
-                abi: swagABI,
-              },
-            }
-          : {}),
+        Swag1155: {
+          address: deployment.swag1155,
+          abi: swagABI,
+        },
       },
     };
 
@@ -175,9 +165,9 @@ async function main() {
       network: networkName,
       chainId,
       addresses: {
-        ZKPassportNFT: nftAddress,
-        FaucetManager: faucetAddress,
-        ...(swagAddress ? { Swag1155: swagAddress } : {}),
+        ZKPassportNFT: deployment.zkPassportNFT,
+        FaucetManager: deployment.faucetManager,
+        Swag1155: deployment.swag1155,
       },
     };
 
@@ -188,12 +178,13 @@ async function main() {
 
     // Create TypeScript types for this network
     const typesContent = `// Auto-generated contract addresses and types for ${networkDisplayName}
+// Generated: ${new Date().toISOString()}
 export const CONTRACTS = ${JSON.stringify(networkConfig, null, 2)} as const;
 
 export const ADDRESSES = {
-  ZKPassportNFT: "${nftAddress}",
-  FaucetManager: "${faucetAddress}",
-  ${swagAddress ? `Swag1155: "${swagAddress}",` : ""}
+  ZKPassportNFT: "${deployment.zkPassportNFT}",
+  FaucetManager: "${deployment.faucetManager}",
+  Swag1155: "${deployment.swag1155}",
 } as const;
 
 export const CHAIN_ID = ${chainId} as const;
@@ -202,12 +193,15 @@ export const NETWORK = "${networkName}" as const;
     writeFileSync(join(networkDir, "contracts.ts"), typesContent);
 
     console.log(`   ✅ Created files in frontend/${networkName}/`);
-    console.log(`      - ZKPassportNFT: ${nftAddress}`);
-    console.log(`      - FaucetManager: ${faucetAddress}`);
-    if (swagAddress) {
-      console.log(`      - Swag1155: ${swagAddress}`);
-    }
+    console.log(`      - ZKPassportNFT: ${deployment.zkPassportNFT}`);
+    console.log(`      - FaucetManager: ${deployment.faucetManager}`);
+    console.log(`      - Swag1155: ${deployment.swag1155}`);
     console.log("");
+  }
+
+  if (Object.keys(multiNetworkConfig.networks).length === 0) {
+    console.error("❌ No deployments found. Deploy contracts first with 'npm run deploy:{network}'");
+    process.exit(1);
   }
 
   // Write multi-network config
@@ -225,7 +219,7 @@ export const NETWORK = "${networkName}" as const;
       addresses: {
         ZKPassportNFT: config.contracts.ZKPassportNFT.address,
         FaucetManager: config.contracts.FaucetManager.address,
-        ...(config.contracts.Swag1155 ? { Swag1155: config.contracts.Swag1155.address } : {}),
+        Swag1155: config.contracts.Swag1155.address,
       },
     };
   }
@@ -247,16 +241,15 @@ export const NETWORK = "${networkName}" as const;
     join(abisDir, "FaucetManager.json"),
     JSON.stringify(faucetABI, null, 2)
   );
-  if (swagABI && swagABI.length) {
-    writeFileSync(
-      join(abisDir, "Swag1155.json"),
-      JSON.stringify(swagABI, null, 2)
-    );
-  }
+  writeFileSync(
+    join(abisDir, "Swag1155.json"),
+    JSON.stringify(swagABI, null, 2)
+  );
   console.log(`✅ Created frontend/abis/ (shared ABIs)`);
 
   // Create TypeScript types for multi-network
   const multiTypesContent = `// Auto-generated multi-network contract addresses and types
+// Generated: ${new Date().toISOString()}
 export const CONTRACTS = ${JSON.stringify(multiNetworkConfig, null, 2)} as const;
 
 export const ADDRESSES = ${JSON.stringify(allAddresses, null, 2)} as const;
@@ -293,14 +286,14 @@ frontend/
 │   ├── ZKPassportNFT.json
 │   ├── FaucetManager.json
 │   └── Swag1155.json
-├── base/                  # Base Mainnet specific files
+${Object.keys(multiNetworkConfig.networks)
+  .map(
+    (n) => `├── ${n}/                  # ${NETWORK_NAMES[n] || n} specific files
 │   ├── contracts.json
 │   ├── addresses.json
-│   └── contracts.ts
-└── unichain/              # Unichain Mainnet specific files
-    ├── contracts.json
-    ├── addresses.json
-    └── contracts.ts
+│   └── contracts.ts`
+  )
+  .join("\n")}
 \`\`\`
 
 ## Usage Examples
@@ -314,6 +307,7 @@ import FaucetManager_ABI from './abis/FaucetManager.json';
 
 // Get addresses for a specific network
 const baseAddresses = getAddresses('base');
+const ethereumAddresses = getAddresses('ethereum');
 const unichainAddresses = getAddresses('unichain');
 
 // Use with ethers.js
@@ -348,7 +342,7 @@ import { getAddresses } from './contracts';
 import ZKPassportNFT_ABI from './abis/ZKPassportNFT.json';
 
 function MyComponent({ chainId }: { chainId: number }) {
-  const network = chainId === 8453 ? 'base' : chainId === 130 ? 'unichain' : 'base';
+  const network = chainId === 8453 ? 'base' : chainId === 1 ? 'ethereum' : chainId === 130 ? 'unichain' : 'base';
   const addresses = getAddresses(network);
 
   const { data } = useContractRead({
@@ -366,9 +360,12 @@ function MyComponent({ chainId }: { chainId: number }) {
 ${Object.entries(multiNetworkConfig.networks)
   .map(
     ([name, config]) =>
-      `- **${NETWORK_NAMES[name] || name}** (Chain ID: ${config.chainId})`
+      `- **${NETWORK_NAMES[name] || name}** (Chain ID: ${config.chainId})
+  - ZKPassportNFT: \`${config.contracts.ZKPassportNFT.address}\`
+  - FaucetManager: \`${config.contracts.FaucetManager.address}\`
+  - Swag1155: \`${config.contracts.Swag1155.address}\``
   )
-  .join("\n")}
+  .join("\n\n")}
 
 ## Default Network
 

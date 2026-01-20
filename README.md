@@ -230,8 +230,14 @@ getReturnCount(user)                 // Get user's return count (good actor scor
 npm run compile           # Compile contracts
 npm test                  # Run all tests (77 tests)
 npm run deploy:base       # Deploy to Base
+npx hardhat ignition deploy ignition/modules/DeployAll.ts --network base
+
 npm run deploy:ethereum   # Deploy to Ethereum
+npx hardhat ignition deploy ignition/modules/DeployAll.ts --network ethereum
+
 npm run deploy:unichain   # Deploy to Unichain
+npx hardhat ignition deploy ignition/modules/DeployAll.ts --network unichain
+
 npm run verify:base       # Verify on Basescan
 npm run verify:ethereum   # Verify on Etherscan
 npm run verify:unichain   # Verify on Uniscan
