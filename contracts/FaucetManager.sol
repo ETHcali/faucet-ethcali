@@ -4,14 +4,16 @@ pragma solidity ^0.8.28;
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "./ZKPassportNFT.sol";
 
 /**
  * @title FaucetManager
- * @notice Multi-vault faucet system with returnable/non-returnable vault types and optional whitelist
+ * @notice Multi-vault faucet system with returnable/non-returnable vault types and flexible access control
  * @dev Admin can create multiple vaults for different purposes (hackathons, staking, etc.)
- *      All vaults require ZKPassport NFT for anti-sybil protection.
- *      Vaults can optionally require whitelist for additional access control.
+ *      Vaults can optionally require ZKPassport NFT for anti-sybil protection.
+ *      Vaults can optionally require whitelist or specific token/NFT holding for access control.
  */
 contract FaucetManager is AccessControl, ReentrancyGuard, Pausable {
     // Role definitions
@@ -34,6 +36,8 @@ contract FaucetManager is AccessControl, ReentrancyGuard, Pausable {
         VaultType vaultType;    // Returnable or NonReturnable
         bool active;            // Whether vault accepts claims
         bool whitelistEnabled;  // Whether whitelist is required to claim
+        bool zkPassportRequired; // Whether ZKPassport NFT is required
+        address allowedToken;   // Token/NFT address required to claim (address(0) = no requirement)
         uint256 createdAt;      // Timestamp of creation
     }
 
@@ -69,8 +73,11 @@ contract FaucetManager is AccessControl, ReentrancyGuard, Pausable {
         string name,
         VaultType vaultType,
         uint256 claimAmount,
-        bool whitelistEnabled
+        bool whitelistEnabled,
+        bool zkPassportRequired,
+        address allowedToken
     );
+    event VaultGatingUpdated(uint256 indexed vaultId, bool zkPassportRequired, address allowedToken);
     event VaultUpdated(uint256 indexed vaultId, string name, string description, uint256 claimAmount, bool active);
     event VaultDeposit(uint256 indexed vaultId, address indexed depositor, uint256 amount);
     event VaultWithdraw(uint256 indexed vaultId, address indexed to, uint256 amount);
@@ -104,13 +111,17 @@ contract FaucetManager is AccessControl, ReentrancyGuard, Pausable {
      * @param claimAmount Amount of ETH per claim (in wei)
      * @param vaultType Whether vault is Returnable or NonReturnable
      * @param whitelistEnabled Whether whitelist is required to claim
+     * @param zkPassportRequired Whether ZKPassport NFT is required to claim
+     * @param allowedToken Token/NFT address required to claim (address(0) to disable)
      */
     function createVault(
         string memory name,
         string memory description,
         uint256 claimAmount,
         VaultType vaultType,
-        bool whitelistEnabled
+        bool whitelistEnabled,
+        bool zkPassportRequired,
+        address allowedToken
     ) external onlyRole(ADMIN_ROLE) returns (uint256 vaultId) {
         require(bytes(name).length > 0, "FaucetManager: empty name");
         require(claimAmount > 0, "FaucetManager: claim amount must be > 0");
@@ -128,10 +139,12 @@ contract FaucetManager is AccessControl, ReentrancyGuard, Pausable {
             vaultType: vaultType,
             active: true,
             whitelistEnabled: whitelistEnabled,
+            zkPassportRequired: zkPassportRequired,
+            allowedToken: allowedToken,
             createdAt: block.timestamp
         });
 
-        emit VaultCreated(vaultId, name, vaultType, claimAmount, whitelistEnabled);
+        emit VaultCreated(vaultId, name, vaultType, claimAmount, whitelistEnabled, zkPassportRequired, allowedToken);
     }
 
     /**
@@ -225,6 +238,23 @@ contract FaucetManager is AccessControl, ReentrancyGuard, Pausable {
     }
 
     /**
+     * @notice Update vault gating configuration
+     * @param vaultId Vault ID
+     * @param zkPassportRequired Whether ZKPassport is required
+     * @param allowedToken Token address for gating (address(0) to disable)
+     */
+    function updateVaultGating(
+        uint256 vaultId,
+        bool zkPassportRequired,
+        address allowedToken
+    ) external onlyRole(ADMIN_ROLE) {
+        require(vaultId < vaultCount, "FaucetManager: vault does not exist");
+        vaults[vaultId].zkPassportRequired = zkPassportRequired;
+        vaults[vaultId].allowedToken = allowedToken;
+        emit VaultGatingUpdated(vaultId, zkPassportRequired, allowedToken);
+    }
+
+    /**
      * @notice Deposit ETH to a specific vault
      * @param vaultId Vault ID to deposit to
      */
@@ -313,12 +343,25 @@ contract FaucetManager is AccessControl, ReentrancyGuard, Pausable {
         ClaimInfo storage userClaim = claims[vaultId][msg.sender];
         require(!userClaim.hasClaimed, "FaucetManager: already claimed from this vault");
 
-        // Anti-sybil: require ZKPassport NFT
-        require(nftContract.hasNFTByAddress(msg.sender), "FaucetManager: must own ZKPassport NFT");
+        // Anti-sybil: require ZKPassport NFT (if enabled for this vault)
+        if (vault.zkPassportRequired) {
+            require(nftContract.hasNFTByAddress(msg.sender), "FaucetManager: must own ZKPassport NFT");
+        }
 
         // Check whitelist if enabled
         if (vault.whitelistEnabled) {
             require(whitelist[vaultId][msg.sender], "FaucetManager: not whitelisted");
+        }
+
+        // Check allowed token/NFT holding if configured
+        if (vault.allowedToken != address(0)) {
+            uint256 balance;
+            try IERC721(vault.allowedToken).balanceOf(msg.sender) returns (uint256 bal) {
+                balance = bal;
+            } catch {
+                balance = IERC20(vault.allowedToken).balanceOf(msg.sender);
+            }
+            require(balance > 0, "FaucetManager: must hold required token");
         }
 
         // Update state
@@ -446,8 +489,15 @@ contract FaucetManager is AccessControl, ReentrancyGuard, Pausable {
         if (!vault.active) return (false, "Vault not active");
         if (vault.balance < vault.claimAmount) return (false, "Insufficient vault balance");
         if (claims[vaultId][user].hasClaimed) return (false, "Already claimed from this vault");
-        if (!nftContract.hasNFTByAddress(user)) return (false, "Must own ZKPassport NFT");
+        if (vault.zkPassportRequired && !nftContract.hasNFTByAddress(user)) return (false, "Must own ZKPassport NFT");
         if (vault.whitelistEnabled && !whitelist[vaultId][user]) return (false, "Not whitelisted");
+        if (vault.allowedToken != address(0)) {
+            try IERC721(vault.allowedToken).balanceOf(user) returns (uint256 bal) {
+                if (bal == 0) return (false, "Must hold required token");
+            } catch {
+                if (IERC20(vault.allowedToken).balanceOf(user) == 0) return (false, "Must hold required token");
+            }
+        }
 
         return (true, "");
     }

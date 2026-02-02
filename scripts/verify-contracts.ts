@@ -14,9 +14,9 @@ interface DeploymentResult {
   timestamp: string;
   config: {
     network: string;
-    superAdmin: string;
-    zkpassportOwner: string;
+    swagAdmin: string;
     faucetAdmin: string;
+    zkPassportAdmin: string;
     swagTreasury: string;
     usdcAddress: string;
   };
@@ -54,7 +54,7 @@ async function main() {
   console.log(`   Swag1155:       ${deployment.swag1155}`);
 
   console.log(`\n📋 Config (from deployment):`);
-  console.log(`   Owner/Admin:    ${deployment.config.zkpassportOwner}`);
+  console.log(`   Owner/Admin:    ${deployment.config.zkPassportAdmin}`);
   console.log(`   Treasury:       ${deployment.config.swagTreasury}`);
   console.log(`   USDC:           ${deployment.config.usdcAddress}`);
 
@@ -68,7 +68,7 @@ async function main() {
   const zkpArgs = [
     "ZKPassport Verification",  // name - must match deploy script
     "ZKPASS",                    // symbol - must match deploy script
-    deployment.config.zkpassportOwner,
+    deployment.config.zkPassportAdmin,
   ];
   console.log(`   Constructor args: ${JSON.stringify(zkpArgs)}`);
 
@@ -106,7 +106,7 @@ async function main() {
     "ipfs://",  // baseURI - must match deploy script
     deployment.config.usdcAddress,
     deployment.config.swagTreasury,
-    deployment.config.superAdmin,
+    deployment.config.swagAdmin,
   ];
   console.log(`   Constructor args: ${JSON.stringify(swagArgs)}`);
 

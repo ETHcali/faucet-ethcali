@@ -322,4 +322,115 @@ describe("Swag1155", async function () {
     const finalBalance = await swag.read.balanceOf([buyer2.account.address, tokenId]);
     assert.equal(finalBalance, 1n);
   });
+
+  // ==================== ROYALTY TESTS ====================
+
+  it("Should add royalty recipient", async function () {
+    const tokenId = 601n;
+    await swag.write.setVariant([tokenId, USDC(100), 100n, true]);
+    await swag.write.addRoyalty([tokenId, buyer.account.address, 1000n]); // 10%
+
+    const royalties = await swag.read.getRoyalties([tokenId]);
+    assert.equal(royalties.length, 1);
+    assert.equal(royalties[0].recipient.toLowerCase(), buyer.account.address.toLowerCase());
+    assert.equal(royalties[0].percentage, 1000n);
+  });
+
+  it("Should distribute royalties on purchase", async function () {
+    const tokenId = 602n;
+    const price = USDC(100);
+    const artistAddress = buyer2.account.address;
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+    await swag.write.addRoyalty([tokenId, artistAddress, 1000n]); // 10%
+
+    // Mint USDC to deployer for purchase
+    await usdc.write.mint([deployer.account.address, USDC(200)]);
+    await usdc.write.approve([swag.address, price], { account: deployer.account });
+
+    const artistBefore = await usdc.read.balanceOf([artistAddress]);
+    const treasuryBefore = await usdc.read.balanceOf([treasury.account.address]);
+
+    await swag.write.buy([tokenId, 1n], { account: deployer.account });
+
+    const artistAfter = await usdc.read.balanceOf([artistAddress]);
+    const treasuryAfter = await usdc.read.balanceOf([treasury.account.address]);
+
+    // Artist gets 10%
+    assert.equal(artistAfter - artistBefore, USDC(10));
+    // Treasury gets 90%
+    assert.equal(treasuryAfter - treasuryBefore, USDC(90));
+  });
+
+  it("Should support multiple royalty recipients", async function () {
+    const tokenId = 603n;
+    const price = USDC(100);
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+    await swag.write.addRoyalty([tokenId, buyer.account.address, 500n]); // 5%
+    await swag.write.addRoyalty([tokenId, buyer2.account.address, 300n]); // 3%
+
+    await usdc.write.mint([deployer.account.address, USDC(200)]);
+    await usdc.write.approve([swag.address, price], { account: deployer.account });
+
+    const artist1Before = await usdc.read.balanceOf([buyer.account.address]);
+    const artist2Before = await usdc.read.balanceOf([buyer2.account.address]);
+    const treasuryBefore = await usdc.read.balanceOf([treasury.account.address]);
+
+    await swag.write.buy([tokenId, 1n], { account: deployer.account });
+
+    const artist1After = await usdc.read.balanceOf([buyer.account.address]);
+    const artist2After = await usdc.read.balanceOf([buyer2.account.address]);
+    const treasuryAfter = await usdc.read.balanceOf([treasury.account.address]);
+
+    assert.equal(artist1After - artist1Before, USDC(5));
+    assert.equal(artist2After - artist2Before, USDC(3));
+    assert.equal(treasuryAfter - treasuryBefore, USDC(92));
+  });
+
+  it("Should prevent exceeding 100% royalty", async function () {
+    const tokenId = 604n;
+    await swag.write.setVariant([tokenId, USDC(100), 100n, true]);
+    await swag.write.addRoyalty([tokenId, buyer.account.address, 5000n]); // 50%
+
+    try {
+      await swag.write.addRoyalty([tokenId, buyer2.account.address, 5100n]); // Would exceed 100%
+      assert.fail("Should have reverted");
+    } catch (e: any) {
+      assert(e.message.includes("total royalty exceeds 100%"));
+    }
+  });
+
+  it("Should clear royalties", async function () {
+    const tokenId = 605n;
+    await swag.write.setVariant([tokenId, USDC(100), 100n, true]);
+    await swag.write.addRoyalty([tokenId, buyer.account.address, 1000n]);
+
+    let royalties = await swag.read.getRoyalties([tokenId]);
+    assert.equal(royalties.length, 1);
+
+    await swag.write.clearRoyalties([tokenId]);
+
+    royalties = await swag.read.getRoyalties([tokenId]);
+    assert.equal(royalties.length, 0);
+
+    const totalBps = await swag.read.totalRoyaltyBps([tokenId]);
+    assert.equal(totalBps, 0n);
+  });
+
+  it("Should send full amount to treasury when no royalties", async function () {
+    const tokenId = 606n;
+    const price = USDC(50);
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+
+    await usdc.write.mint([deployer.account.address, USDC(200)]);
+    await usdc.write.approve([swag.address, price], { account: deployer.account });
+
+    const treasuryBefore = await usdc.read.balanceOf([treasury.account.address]);
+    await swag.write.buy([tokenId, 1n], { account: deployer.account });
+    const treasuryAfter = await usdc.read.balanceOf([treasury.account.address]);
+
+    assert.equal(treasuryAfter - treasuryBefore, price);
+  });
 });

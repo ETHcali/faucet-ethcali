@@ -26,9 +26,9 @@ const __dirname = path.dirname(__filename);
 
 interface DeploymentConfig {
   network: string;
-  superAdmin: string;
-  zkpassportOwner: string;
+  swagAdmin: string;
   faucetAdmin: string;
+  zkPassportAdmin: string;
   swagTreasury: string;
   usdcAddress: string;
 }
@@ -62,9 +62,9 @@ function getConfig(networkName: string): DeploymentConfig {
 
   return {
     network: networkName,
-    superAdmin: process.env.SUPER_ADMIN_ADDRESS!,
-    zkpassportOwner: process.env.ZKPASSPORT_OWNER_ADDRESS!,
-    faucetAdmin: process.env.FAUCET_ADMIN_ADDRESS!,
+    swagAdmin: process.env.SWAG_ADMIN!,
+    faucetAdmin: process.env.FAUCET_ADMIN!,
+    zkPassportAdmin: process.env.ZK_PASSPORT_ADMIN!,
     swagTreasury: process.env.SWAG_TREASURY_ADDRESS!,
     usdcAddress,
   };
@@ -111,14 +111,14 @@ async function main() {
   // Get configuration
   const config = getConfig(networkName);
   console.log(`\n🌐 Network: ${config.network}`);
-  console.log(`👤 Super Admin: ${config.superAdmin}`);
-  console.log(`👤 ZKPassport Owner: ${config.zkpassportOwner}`);
+  console.log(`👤 Swag Admin: ${config.swagAdmin}`);
   console.log(`👤 Faucet Admin: ${config.faucetAdmin}`);
+  console.log(`👤 ZK Passport Admin: ${config.zkPassportAdmin}`);
   console.log(`💰 Swag Treasury: ${config.swagTreasury}`);
 
   // Validate addresses
-  if (!config.superAdmin || !config.swagTreasury) {
-    throw new Error("Missing required addresses in .env");
+  if (!config.swagAdmin || !config.faucetAdmin || !config.zkPassportAdmin || !config.swagTreasury) {
+    throw new Error("Missing required addresses in .env (SWAG_ADMIN, FAUCET_ADMIN, ZK_PASSPORT_ADMIN, SWAG_TREASURY_ADDRESS)");
   }
 
   // Get USDC address or deploy mock for testnets
@@ -134,20 +134,20 @@ async function main() {
 
   // Deploy ZKPassportNFT
   console.log("\n📦 Deploying ZKPassportNFT...");
-  console.log(`   Owner will be: ${config.zkpassportOwner}`);
+  console.log(`   Owner will be: ${config.zkPassportAdmin}`);
   const zkPassportNFT = await viem.deployContract("ZKPassportNFT", [
     "ZKPassport Verification",
     "ZKPASS",
-    config.zkpassportOwner as `0x${string}`,
+    config.zkPassportAdmin as `0x${string}`,
   ]);
   const zkPassportAddress = zkPassportNFT.address;
   console.log(`   ZKPassportNFT deployed: ${zkPassportAddress}`);
-  console.log(`   ✅ Owner set to: ${config.zkpassportOwner}`);
+  console.log(`   ✅ Owner set to: ${config.zkPassportAdmin}`);
 
   // Set metadata if configured
   const [deployer] = await viem.getWalletClients();
   if (
-    deployer.account.address.toLowerCase() === config.zkpassportOwner.toLowerCase() &&
+    deployer.account.address.toLowerCase() === config.zkPassportAdmin.toLowerCase() &&
     process.env.NFT_IMAGE_URI &&
     process.env.NFT_DESCRIPTION
   ) {
@@ -174,18 +174,18 @@ async function main() {
 
   // Deploy Swag1155
   console.log("\n📦 Deploying Swag1155...");
-  console.log(`   Admin will be: ${config.superAdmin}`);
+  console.log(`   Admin will be: ${config.swagAdmin}`);
   const swag1155 = await viem.deployContract("Swag1155", [
     "ipfs://",
     usdcAddress as `0x${string}`,
     config.swagTreasury as `0x${string}`,
-    config.superAdmin as `0x${string}`,
+    config.swagAdmin as `0x${string}`,
   ]);
   const swag1155Address = swag1155.address;
   console.log(`   Swag1155 deployed: ${swag1155Address}`);
   console.log(`   Treasury: ${config.swagTreasury}`);
   console.log(`   USDC: ${usdcAddress}`);
-  console.log(`   ✅ Admin set to: ${config.superAdmin}`);
+  console.log(`   ✅ Admin set to: ${config.swagAdmin}`);
 
   // Summary
   console.log("\n═══════════════════════════════════════════════════════════");
@@ -197,9 +197,9 @@ async function main() {
   console.log(`   Swag1155:       ${swag1155Address}`);
 
   console.log(`\n🔐 Security Configuration:`);
-  console.log(`   ZKPassportNFT Owner: ${config.zkpassportOwner}`);
+  console.log(`   ZKPassportNFT Owner: ${config.zkPassportAdmin}`);
   console.log(`   FaucetManager Admin: ${config.faucetAdmin}`);
-  console.log(`   Swag1155 Admin:      ${config.superAdmin}`);
+  console.log(`   Swag1155 Admin:      ${config.swagAdmin}`);
   console.log(`   Swag1155 Treasury:   ${config.swagTreasury}`);
 
   // Save deployment
@@ -220,7 +220,7 @@ async function main() {
   console.log(`
 📝 After deployment, admins can:
 
-ZKPassportNFT (Owner: ${config.zkpassportOwner}):
+ZKPassportNFT (Owner: ${config.zkPassportAdmin}):
   - setMetadata(imageURI, description, externalURL, useIPFS)
   - transferOwnership(newOwner)
 
@@ -230,7 +230,7 @@ FaucetManager (Admin: ${config.faucetAdmin}):
   - createVault(...)       - Create new faucet
   - setNFTContract(addr)   - Change ZKPassport contract
 
-Swag1155 (Admin: ${config.superAdmin}):
+Swag1155 (Admin: ${config.swagAdmin}):
   - addAdmin(address)      - Add new admin
   - removeAdmin(address)   - Remove admin
   - setTreasury(address)   - Change treasury wallet

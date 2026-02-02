@@ -82,8 +82,13 @@ ACCESS CONTROL (FaucetManager, Swag1155):
 │  ADMIN_ROLE (Operations)                                     │
 │  ├── createVault()       - Create new faucet                │
 │  ├── updateVault()       - Edit vault settings              │
+│  ├── updateVaultGating() - Update vault ZKPassport/token gating │
 │  ├── deposit()           - Add ETH to vault                 │
 │  ├── withdraw()          - Remove ETH from vault            │
+│  ├── addToWhitelist()    - Add address to vault whitelist   │
+│  ├── removeFromWhitelist() - Remove address from whitelist  │
+│  ├── addBatchToWhitelist() - Batch add to whitelist         │
+│  ├── removeBatchFromWhitelist() - Batch remove from whitelist │
 │  ├── pause()             - Emergency pause                  │
 │  └── unpause()           - Resume operations                │
 │                                                              │
@@ -109,6 +114,8 @@ ACCESS CONTROL (FaucetManager, Swag1155):
 │  ├── setVariant()        - Create/edit products             │
 │  ├── setVariantWithURI() - Create with metadata             │
 │  ├── setBaseURI()        - Set default metadata URI         │
+│  ├── addRoyalty()        - Add royalty recipient for a product │
+│  ├── clearRoyalties()    - Remove all royalties for a product │
 │  └── markFulfilled()     - Confirm shipment                 │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
@@ -125,18 +132,13 @@ ACCESS CONTROL (FaucetManager, Swag1155):
 # ADMIN & TREASURY CONFIGURATION
 # ============================================================
 
-# Super Admin - Has full control, can add/remove other admins
-# SECURITY: Use a multisig or hardware wallet
-SUPER_ADMIN_ADDRESS=0x...
+# Contract Admins
+SWAG_ADMIN=0x...          # Admin for Swag1155 (can manage products, royalties, admins)
+FAUCET_ADMIN=0x...        # Admin for FaucetManager (can manage vaults, admins)
+ZK_PASSPORT_ADMIN=0x...   # Owner for ZKPassportNFT (can manage metadata)
 
-# ZKPassportNFT owner (can be same as super admin)
-ZKPASSPORT_OWNER_ADDRESS=0x...
-
-# FaucetManager admin (can be same as super admin)
-FAUCET_ADMIN_ADDRESS=0x...
-
-# Treasury wallet for Swag1155 USDC payments
-SWAG_TREASURY_ADDRESS=0x...
+# Treasury
+SWAG_TREASURY_ADDRESS=0x...  # Receives USDC payments (remainder after royalties)
 
 # Optional: NFT metadata (can be set post-deployment)
 NFT_IMAGE_URI=ipfs://...
@@ -156,9 +158,9 @@ npx hardhat run scripts/deploy-all.ts --network sepolia
 
 ### What Happens During Deployment
 
-1. **ZKPassportNFT**: Deploys, then transfers ownership to `ZKPASSPORT_OWNER_ADDRESS`
-2. **FaucetManager**: Deploys, grants roles to `FAUCET_ADMIN_ADDRESS`
-3. **Swag1155**: Deploys with `SWAG_TREASURY_ADDRESS`, grants roles to `SUPER_ADMIN_ADDRESS`
+1. **ZKPassportNFT**: Deploys, then transfers ownership to `ZK_PASSPORT_ADMIN`
+2. **FaucetManager**: Deploys, grants admin roles to `FAUCET_ADMIN`
+3. **Swag1155**: Deploys with `SWAG_TREASURY_ADDRESS`, grants admin roles to `SWAG_ADMIN`
 
 ---
 
@@ -407,5 +409,8 @@ const ADMIN_ROLE = keccak256(toBytes('ADMIN_ROLE'));
 | Change treasury | Swag1155 | `setTreasury()` | DEFAULT_ADMIN_ROLE |
 | Change owner | ZKPassportNFT | `transferOwnership()` | Owner |
 | Create vault | FaucetManager | `createVault()` | ADMIN_ROLE |
+| Update vault gating | FaucetManager | `updateVaultGating()` | ADMIN_ROLE |
 | Create product | Swag1155 | `setVariantWithURI()` | ADMIN_ROLE |
+| Add royalty | Swag1155 | `addRoyalty()` | ADMIN_ROLE |
+| Clear royalties | Swag1155 | `clearRoyalties()` | ADMIN_ROLE |
 | Pause | FaucetManager | `pause()` | ADMIN_ROLE |

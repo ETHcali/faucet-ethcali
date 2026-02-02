@@ -30,6 +30,9 @@ Swag1155 is an ERC-1155 multi-token contract for managing physical merchandise (
 - **Role-based access** (DEFAULT_ADMIN_ROLE, ADMIN_ROLE)
 - **Per-token metadata** (IPFS URIs)
 - **Physical redemption tracking** (3-state flow)
+- **Royalty distribution** (automatic payment splits to artists)
+
+**Note:** When users purchase swag, payments are automatically split between royalty recipients (e.g., artists) and the treasury. The buyer only needs to approve the total USDC amount.
 
 ### Role Hierarchy
 
@@ -144,6 +147,8 @@ Swag1155 is an ERC-1155 multi-token contract for managing physical merchandise (
 | **[Mark Shipped]** | `markFulfilled()` | Admin | tokenId, ownerAddress |
 | **[Buy Now]** | `approve()` + `buy()` | User | tokenId, quantity |
 | **[Redeem Physical]** | `redeem()` | User | tokenId |
+| **[Add Royalty]** | `addRoyalty()` | Admin | tokenId, recipient, percentage |
+| **[Clear Royalties]** | `clearRoyalties()` | Admin | tokenId |
 
 ---
 
@@ -209,6 +214,33 @@ const statusLabels: Record<RedemptionStatus, string> = {
 
 ---
 
+### RoyaltyInfo
+
+Stores royalty recipient and percentage for payment distribution.
+
+```solidity
+struct RoyaltyInfo {
+    address recipient;   // Royalty recipient (e.g., artist)
+    uint256 percentage;  // Basis points (500 = 5%, 1000 = 10%)
+}
+```
+
+**Frontend usage:**
+```typescript
+interface RoyaltyInfo {
+  recipient: string;    // e.g., "0xArtist..."
+  percentage: bigint;   // e.g., 500n = 5%
+}
+
+// Convert basis points to percentage
+const percentageDisplay = Number(royalty.percentage) / 100; // 5.00%
+
+// Calculate royalty amount from price
+const royaltyAmount = (price * royalty.percentage) / 10000n;
+```
+
+---
+
 ## State Variables
 
 ### Public Variables
@@ -219,6 +251,14 @@ const statusLabels: Record<RedemptionStatus, string> = {
 | `treasury` | `address` | Address receiving USDC payments | `useReadContract({ functionName: 'treasury' })` |
 | `variants` | `mapping(uint256 => Variant)` | Product variant data by tokenId | `useReadContract({ functionName: 'variants', args: [tokenId] })` |
 | `redemptions` | `mapping(uint256 => mapping(address => RedemptionStatus))` | Redemption status by tokenId and owner | `useReadContract({ functionName: 'redemptions', args: [tokenId, owner] })` |
+| `royaltyRecipients` | `mapping(uint256 => RoyaltyInfo[])` | Array of royalty recipients per tokenId | `useReadContract({ functionName: 'royaltyRecipients', args: [tokenId, index] })` |
+| `totalRoyaltyBps` | `mapping(uint256 => uint256)` | Total royalty basis points per tokenId | `useReadContract({ functionName: 'totalRoyaltyBps', args: [tokenId] })` |
+
+### Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `ROYALTY_DENOMINATOR` | `10000` | Basis points denominator (100% = 10000 bps) |
 
 ### Role Constants
 
@@ -449,6 +489,130 @@ function setBaseURI(string memory newURI) external onlyRole(ADMIN_ROLE)
 
 ---
 
+### addRoyalty
+
+Adds a royalty recipient for a specific token. Multiple recipients can be added per token.
+
+```solidity
+function addRoyalty(uint256 tokenId, address recipient, uint256 percentage) external onlyRole(ADMIN_ROLE)
+```
+
+| Parameter | Type | Description | Example |
+|-----------|------|-------------|---------|
+| `tokenId` | `uint256` | Token to receive royalties | `1001` |
+| `recipient` | `address` | Royalty recipient address (e.g., artist) | `0xArtist...` |
+| `percentage` | `uint256` | Percentage in basis points (bps) | `500` (= 5%) |
+
+**Requirements:**
+- Caller must have `ADMIN_ROLE`
+- `recipient` cannot be zero address
+- `percentage` must be > 0
+- Combined royalties for token cannot exceed 10000 bps (100%)
+
+**Emits:** `RoyaltyAdded(uint256 indexed tokenId, address indexed recipient, uint256 percentage)`
+
+**Frontend:**
+```typescript
+// Add 5% royalty for artist
+await writeContract({
+  address: swag1155,
+  abi: Swag1155ABI,
+  functionName: 'addRoyalty',
+  args: [
+    1001n,                  // tokenId
+    '0xArtistAddress...',   // recipient
+    500n,                   // percentage (5%)
+  ],
+});
+
+// Add multiple royalties (10% to artist, 5% to designer)
+await writeContract({
+  address: swag1155,
+  abi: Swag1155ABI,
+  functionName: 'addRoyalty',
+  args: [1001n, '0xArtist...', 1000n], // 10%
+});
+
+await writeContract({
+  address: swag1155,
+  abi: Swag1155ABI,
+  functionName: 'addRoyalty',
+  args: [1001n, '0xDesigner...', 500n], // 5%
+});
+```
+
+---
+
+### clearRoyalties
+
+Removes all royalty recipients for a specific token.
+
+```solidity
+function clearRoyalties(uint256 tokenId) external onlyRole(ADMIN_ROLE)
+```
+
+| Parameter | Type | Description | Example |
+|-----------|------|-------------|---------|
+| `tokenId` | `uint256` | Token to clear royalties from | `1001` |
+
+**Requirements:**
+- Caller must have `ADMIN_ROLE`
+
+**Emits:** `RoyaltiesCleared(uint256 indexed tokenId)`
+
+**Frontend:**
+```typescript
+// Remove all royalties for a token
+await writeContract({
+  address: swag1155,
+  abi: Swag1155ABI,
+  functionName: 'clearRoyalties',
+  args: [1001n],
+});
+```
+
+---
+
+### getRoyalties
+
+View function to retrieve all royalty recipients for a token.
+
+```solidity
+function getRoyalties(uint256 tokenId) external view returns (RoyaltyInfo[] memory)
+```
+
+| Parameter | Type | Description | Example |
+|-----------|------|-------------|---------|
+| `tokenId` | `uint256` | Token to query | `1001` |
+
+**Returns:** `RoyaltyInfo[]` - Array of royalty recipients and percentages
+
+**Frontend:**
+```typescript
+const { data: royalties } = useReadContract({
+  address: swag1155,
+  abi: Swag1155ABI,
+  functionName: 'getRoyalties',
+  args: [1001n],
+});
+
+// royalties = [
+//   { recipient: '0xArtist...', percentage: 1000n },    // 10%
+//   { recipient: '0xDesigner...', percentage: 500n },   // 5%
+// ]
+
+// Calculate total royalty percentage
+const totalRoyaltyPercent = royalties.reduce(
+  (sum, r) => sum + Number(r.percentage) / 100,
+  0
+); // 15.00%
+
+// Calculate treasury portion
+const treasuryPercent = 100 - totalRoyaltyPercent; // 85.00%
+```
+
+---
+
 ### markFulfilled
 
 Marks a redemption as fulfilled after admin verifies shipment.
@@ -487,7 +651,7 @@ await writeContract({
 
 ### buy
 
-Purchase a single variant with USDC.
+Purchase a single variant with USDC. Payment is automatically split: royalties are sent to recipients, and the remainder goes to the treasury.
 
 ```solidity
 function buy(uint256 tokenId, uint256 quantity) external nonReentrant
@@ -506,9 +670,11 @@ function buy(uint256 tokenId, uint256 quantity) external nonReentrant
 
 **Emits:** `Purchased(address indexed buyer, uint256 indexed tokenId, uint256 quantity, uint256 unitPrice, uint256 totalPrice)`
 
+**Note:** Payment distribution happens automatically within the contract. If the token has royalty recipients configured, they receive their percentage first, and the treasury receives the remainder. The buyer only needs to approve the total USDC amount (`price * quantity`) - no frontend changes required.
+
 **Frontend:**
 ```typescript
-// Step 1: Approve USDC
+// Step 1: Approve USDC (buyer approves total amount)
 const totalPrice = variant.price * quantity;
 await writeContract({
   address: usdcAddress,
@@ -517,7 +683,7 @@ await writeContract({
   args: [swag1155, totalPrice],
 });
 
-// Step 2: Buy
+// Step 2: Buy (payment automatically split to royalty recipients + treasury)
 await writeContract({
   address: swag1155,
   abi: Swag1155ABI,
@@ -853,6 +1019,13 @@ const { data: balance } = useReadContract({
 | `RedemptionRequested` | `owner`, `tokenId` | User calls `redeem()` |
 | `RedemptionFulfilled` | `owner`, `tokenId`, `admin` | Admin calls `markFulfilled()` |
 
+### Royalty Events
+
+| Event | Parameters | When Emitted |
+|-------|------------|--------------|
+| `RoyaltyAdded` | `tokenId`, `recipient`, `percentage` | Admin calls `addRoyalty()` |
+| `RoyaltiesCleared` | `tokenId` | Admin calls `clearRoyalties()` |
+
 **Frontend Event Listening:**
 ```typescript
 import { useWatchContractEvent } from 'wagmi';
@@ -903,6 +1076,9 @@ useWatchContractEvent({
 | `"not owner"` | Trying to redeem without owning NFT | User must own the token |
 | `"already redeemed"` | Trying to redeem twice | NFT already redeemed |
 | `"not pending"` | Admin trying to fulfill non-pending redemption | Status must be PendingFulfillment |
+| `"invalid recipient"` | Zero address passed for royalty recipient | Provide valid recipient address |
+| `"percentage must be > 0"` | Zero percentage passed for royalty | Provide percentage > 0 |
+| `"total royalty exceeds 100%"` | Combined royalties exceed 10000 bps | Reduce royalty percentages (total must be ≤ 10000) |
 
 ---
 

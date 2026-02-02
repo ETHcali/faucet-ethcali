@@ -60,6 +60,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       0, // NonReturnable
       false, // whitelistEnabled
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vault = await faucetManager.read.getVault([0n]);
@@ -67,6 +69,7 @@ describe("FaucetManager", async function () {
     assert.equal(vault.vaultType, 0);
     assert.equal(vault.active, true);
     assert.equal(vault.whitelistEnabled, false);
+    assert.equal(vault.zkPassportRequired, true);
   });
 
   it("Should create a returnable vault", async function () {
@@ -76,6 +79,8 @@ describe("FaucetManager", async function () {
       parseEther("0.5"),
       1, // Returnable
       false, // whitelistEnabled
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000",
     ]);
 
     const vault = await faucetManager.read.getVault([1n]);
@@ -91,6 +96,8 @@ describe("FaucetManager", async function () {
         parseEther("0.1"),
         0,
         false,
+        true,  // zkPassportRequired
+        "0x0000000000000000000000000000000000000000", // allowedToken
       ]);
       assert.fail("Should have reverted");
     } catch (e: any) {
@@ -106,6 +113,8 @@ describe("FaucetManager", async function () {
         0n,
         0,
         false,
+        true,  // zkPassportRequired
+        "0x0000000000000000000000000000000000000000", // allowedToken
       ]);
       assert.fail("Should have reverted");
     } catch (e: any) {
@@ -122,6 +131,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       0,
       false,
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultId = 2n; // Third vault created
@@ -138,6 +149,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       0,
       false,
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultId = 3n;
@@ -163,6 +176,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       0,
       false,
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultId = 4n;
@@ -186,6 +201,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       0,
       false,
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultId = 5n;
@@ -208,6 +225,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       0,
       false,
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     await faucetManager.write.createVault([
@@ -216,6 +235,8 @@ describe("FaucetManager", async function () {
       parseEther("0.2"),
       0,
       false,
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultIdA = 6n;
@@ -242,6 +263,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       0,
       false,
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultId = 8n;
@@ -263,6 +286,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       0,
       false,
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultId = 9n;
@@ -294,6 +319,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       0, // NonReturnable
       true, // whitelistEnabled
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultId = 10n;
@@ -337,6 +364,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       0,
       true,
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultId = 11n;
@@ -370,6 +399,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       0,
       false, // Start without whitelist
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultId = 12n;
@@ -394,6 +425,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       0,
       true,
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultId = 13n;
@@ -419,6 +452,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       1, // Returnable
       false,
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultId = 14n;
@@ -447,6 +482,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       0, // NonReturnable
       false,
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultId = 15n;
@@ -471,6 +508,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       1,
       false,
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultId = 16n;
@@ -493,6 +532,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       1,
       false,
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultId = 17n;
@@ -554,6 +595,8 @@ describe("FaucetManager", async function () {
       parseEther("0.1"),
       0,
       false,
+      true,  // zkPassportRequired
+      "0x0000000000000000000000000000000000000000", // allowedToken
     ]);
 
     const vaultId = await faucetManager.read.vaultCount() - 1n;
@@ -567,5 +610,143 @@ describe("FaucetManager", async function () {
     const [canClaim2, reason2] = await faucetManager.read.canUserClaim([vaultId, admin.account.address]);
     assert.equal(canClaim2, false);
     assert.equal(reason2, "Must own ZKPassport NFT");
+  });
+
+  // ==================== OPTIONAL ZKPASSPORT GATING TESTS ====================
+
+  it("Should create vault without ZKPassport requirement", async function () {
+    await faucetManager.write.createVault([
+      "No ZKPassport Required",
+      "Anyone can claim",
+      parseEther("0.1"),
+      0,
+      false,
+      false, // zkPassportRequired = false
+      "0x0000000000000000000000000000000000000000", // allowedToken
+    ]);
+
+    const vaultId = await faucetManager.read.vaultCount() - 1n;
+    const vault = await faucetManager.read.getVault([vaultId]);
+    assert.equal(vault.zkPassportRequired, false);
+
+    // Deposit funds
+    await faucetManager.write.deposit([vaultId], { value: parseEther("5") });
+
+    // Admin (who has NO ZKPassport) can claim successfully
+    await faucetManager.write.claim([vaultId], { account: admin.account });
+
+    const claimInfo = await faucetManager.read.getClaimInfo([vaultId, admin.account.address]);
+    assert.equal(claimInfo.hasClaimed, true);
+  });
+
+  it("Should enforce ZKPassport when required", async function () {
+    await faucetManager.write.createVault([
+      "ZKPassport Enforced",
+      "Must have ZKPassport",
+      parseEther("0.1"),
+      0,
+      false,
+      true, // zkPassportRequired = true
+      "0x0000000000000000000000000000000000000000", // allowedToken
+    ]);
+
+    const vaultId = await faucetManager.read.vaultCount() - 1n;
+    await faucetManager.write.deposit([vaultId], { value: parseEther("5") });
+
+    // Admin (no ZKPassport) tries to claim, should revert
+    try {
+      await faucetManager.write.claim([vaultId], { account: admin.account });
+      assert.fail("Should have reverted");
+    } catch (e: any) {
+      assert(e.message.includes("must own ZKPassport NFT"));
+    }
+  });
+
+  // ==================== TOKEN-BASED GATING TESTS ====================
+
+  it("Should create vault with token gating", async function () {
+    // Deploy a mock ERC20 token (MockUSDC)
+    const mockUSDC = await viem.deployContract("MockUSDC");
+
+    // Mint tokens to user1
+    await mockUSDC.write.mint([user1.account.address, parseEther("100")]);
+
+    // Create vault with token gating
+    await faucetManager.write.createVault([
+      "Token Gated Vault",
+      "Must hold mock USDC",
+      parseEther("0.1"),
+      0,
+      false,
+      false, // zkPassportRequired = false
+      mockUSDC.address, // allowedToken = mockUSDC
+    ]);
+
+    const vaultId = await faucetManager.read.vaultCount() - 1n;
+    await faucetManager.write.deposit([vaultId], { value: parseEther("5") });
+
+    // user1 (has tokens) claims successfully
+    await faucetManager.write.claim([vaultId], { account: user1.account });
+
+    const claimInfo = await faucetManager.read.getClaimInfo([vaultId, user1.account.address]);
+    assert.equal(claimInfo.hasClaimed, true);
+  });
+
+  it("Should prevent claim without required token", async function () {
+    // Deploy a mock ERC20 token
+    const mockUSDC = await viem.deployContract("MockUSDC");
+
+    // Mint tokens only to user1, NOT to user2
+    await mockUSDC.write.mint([user1.account.address, parseEther("100")]);
+
+    // Create vault with token gating
+    await faucetManager.write.createVault([
+      "Token Required Vault",
+      "Must hold mock USDC",
+      parseEther("0.1"),
+      0,
+      false,
+      false, // zkPassportRequired = false
+      mockUSDC.address, // allowedToken = mockUSDC
+    ]);
+
+    const vaultId = await faucetManager.read.vaultCount() - 1n;
+    await faucetManager.write.deposit([vaultId], { value: parseEther("5") });
+
+    // user2 (no mock tokens) tries to claim, should revert
+    try {
+      await faucetManager.write.claim([vaultId], { account: user2.account });
+      assert.fail("Should have reverted");
+    } catch (e: any) {
+      assert(e.message.includes("must hold required token"));
+    }
+  });
+
+  // ==================== UPDATE VAULT GATING TESTS ====================
+
+  it("Should update vault gating", async function () {
+    await faucetManager.write.createVault([
+      "Gating Update Test",
+      "Test updateVaultGating",
+      parseEther("0.1"),
+      0,
+      false,
+      true, // zkPassportRequired = true
+      "0x0000000000000000000000000000000000000000", // allowedToken
+    ]);
+
+    const vaultId = await faucetManager.read.vaultCount() - 1n;
+    let vault = await faucetManager.read.getVault([vaultId]);
+    assert.equal(vault.zkPassportRequired, true);
+
+    // Update vault gating to disable ZKPassport requirement
+    await faucetManager.write.updateVaultGating([
+      vaultId,
+      false, // zkPassportRequired = false
+      "0x0000000000000000000000000000000000000000", // allowedToken
+    ]);
+
+    vault = await faucetManager.read.getVault([vaultId]);
+    assert.equal(vault.zkPassportRequired, false);
   });
 });

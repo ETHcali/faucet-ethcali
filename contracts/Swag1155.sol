@@ -25,6 +25,11 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
         bool active;        // Sale status
     }
 
+    struct RoyaltyInfo {
+        address recipient;
+        uint256 percentage; // Basis points (e.g., 500 = 5%)
+    }
+
     // Redemption status for physical swag
     enum RedemptionStatus {
         NotRedeemed,        // User hasn't claimed yet
@@ -47,6 +52,13 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
     // Redemption tracking: tokenId => owner => status
     mapping(uint256 => mapping(address => RedemptionStatus)) public redemptions;
 
+    // Royalty recipients per tokenId
+    mapping(uint256 => RoyaltyInfo[]) public royaltyRecipients;
+    // Total royalty percentage per tokenId (sum of all royalties in basis points)
+    mapping(uint256 => uint256) public totalRoyaltyBps;
+    // Basis points denominator (10000 = 100%)
+    uint256 public constant ROYALTY_DENOMINATOR = 10000;
+
     // Track known tokenIds for optional iteration (not required but helpful)
     using EnumerableSet for EnumerableSet.UintSet;
     EnumerableSet.UintSet private _tokenIds;
@@ -62,6 +74,8 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
     event AdminRemoved(address indexed admin);
     event RedemptionRequested(address indexed owner, uint256 indexed tokenId);
     event RedemptionFulfilled(address indexed owner, uint256 indexed tokenId, address indexed admin);
+    event RoyaltyAdded(uint256 indexed tokenId, address indexed recipient, uint256 percentage);
+    event RoyaltiesCleared(uint256 indexed tokenId);
 
     /**
      * @notice Constructor
@@ -182,6 +196,45 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
         _setURI(newURI);
     }
 
+    // ---------- Royalty Management ----------
+
+    /**
+     * @notice Add a royalty recipient for a specific token
+     * @param tokenId Token ID
+     * @param recipient Royalty recipient address (e.g., artist)
+     * @param percentage Royalty percentage in basis points (e.g., 500 = 5%)
+     */
+    function addRoyalty(uint256 tokenId, address recipient, uint256 percentage) external onlyRole(ADMIN_ROLE) {
+        require(recipient != address(0), "invalid recipient");
+        require(percentage > 0, "percentage must be > 0");
+        require(totalRoyaltyBps[tokenId] + percentage < ROYALTY_DENOMINATOR, "total royalty exceeds 100%");
+
+        royaltyRecipients[tokenId].push(RoyaltyInfo({
+            recipient: recipient,
+            percentage: percentage
+        }));
+        totalRoyaltyBps[tokenId] += percentage;
+        emit RoyaltyAdded(tokenId, recipient, percentage);
+    }
+
+    /**
+     * @notice Remove all royalties for a token
+     * @param tokenId Token ID
+     */
+    function clearRoyalties(uint256 tokenId) external onlyRole(ADMIN_ROLE) {
+        delete royaltyRecipients[tokenId];
+        totalRoyaltyBps[tokenId] = 0;
+        emit RoyaltiesCleared(tokenId);
+    }
+
+    /**
+     * @notice Get all royalty recipients for a token
+     * @param tokenId Token ID
+     */
+    function getRoyalties(uint256 tokenId) external view returns (RoyaltyInfo[] memory) {
+        return royaltyRecipients[tokenId];
+    }
+
     // ---------- Views ----------
 
     function remaining(uint256 tokenId) public view returns (uint256) {
@@ -252,8 +305,7 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
         require(v.minted + quantity <= v.maxSupply, "exceeds supply");
 
         uint256 total = v.price * quantity;
-        // Pull USDC from buyer to treasury
-        IERC20(usdc).transferFrom(msg.sender, treasury, total);
+        _distributePayment(tokenId, total);
 
         // Mint after successful payment
         v.minted += quantity;
@@ -267,7 +319,7 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
         uint256 len = tokenIds.length;
         require(len > 0, "empty batch");
 
-        uint256 total = 0;
+        uint256 grandTotal = 0;
         for (uint256 i = 0; i < len; i++) {
             uint256 tokenId = tokenIds[i];
             uint256 qty = quantities[i];
@@ -275,11 +327,11 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
             Variant storage v = variants[tokenId];
             require(v.active, "variant inactive");
             require(v.minted + qty <= v.maxSupply, "exceeds supply");
-            total += v.price * qty;
+            uint256 itemTotal = v.price * qty;
+            grandTotal += itemTotal;
+            // Distribute per-token royalties
+            _distributePayment(tokenId, itemTotal);
         }
-
-        // Single payment for batch
-        IERC20(usdc).transferFrom(msg.sender, treasury, total);
 
         // Update supply and mint
         for (uint256 i = 0; i < len; i++) {
@@ -288,7 +340,27 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
         }
         _mintBatch(msg.sender, tokenIds, quantities, "");
 
-        emit PurchasedBatch(msg.sender, tokenIds, quantities, total);
+        emit PurchasedBatch(msg.sender, tokenIds, quantities, grandTotal);
+    }
+
+    /**
+     * @dev Distribute payment: royalties to recipients, remainder to treasury
+     */
+    function _distributePayment(uint256 tokenId, uint256 total) internal {
+        uint256 royaltyPaid = 0;
+        RoyaltyInfo[] storage recipients = royaltyRecipients[tokenId];
+        for (uint256 i = 0; i < recipients.length; i++) {
+            uint256 amount = (total * recipients[i].percentage) / ROYALTY_DENOMINATOR;
+            if (amount > 0) {
+                IERC20(usdc).transferFrom(msg.sender, recipients[i].recipient, amount);
+                royaltyPaid += amount;
+            }
+        }
+        // Remainder goes to treasury
+        uint256 treasuryAmount = total - royaltyPaid;
+        if (treasuryAmount > 0) {
+            IERC20(usdc).transferFrom(msg.sender, treasury, treasuryAmount);
+        }
     }
 
     // ---------- Required Overrides ----------
