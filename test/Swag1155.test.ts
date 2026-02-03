@@ -11,23 +11,28 @@ describe("Swag1155", async function () {
 
   let usdc: any;
   let swag: any;
+  let mockPoap: any;
+  let mockNft: any;
 
   const BASE_URI = "https://wallet.ethcali.org/metadata/{id}.json";
 
   before(async function () {
-    // Deploy MockUSDC
+    // Deploy mocks
     usdc = await viem.deployContract("MockUSDC", []);
+    mockPoap = await viem.deployContract("MockPOAP", []);
+    mockNft = await viem.deployContract("MockERC721", []);
 
     // Mint USDC to buyers
     await usdc.write.mint([buyer.account.address, USDC(1000)]);
     await usdc.write.mint([buyer2.account.address, USDC(1000)]);
 
-    // Deploy Swag1155 with deployer as initial admin
+    // Deploy Swag1155 with deployer as initial admin + mock POAP
     swag = await viem.deployContract("Swag1155", [
       BASE_URI,
       usdc.address,
       treasury.account.address,
       deployer.account.address, // initialAdmin
+      mockPoap.address,         // POAP contract
     ]);
   });
 
@@ -429,6 +434,273 @@ describe("Swag1155", async function () {
 
     const treasuryBefore = await usdc.read.balanceOf([treasury.account.address]);
     await swag.write.buy([tokenId, 1n], { account: deployer.account });
+    const treasuryAfter = await usdc.read.balanceOf([treasury.account.address]);
+
+    assert.equal(treasuryAfter - treasuryBefore, price);
+  });
+
+  // ==================== DISCOUNT TESTS ====================
+
+  it("POAP discount: buyer with POAP gets reduced price", async function () {
+    const tokenId = 701n;
+    const price = USDC(100);
+    const eventId = 12345n;
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+    await swag.write.addPoapDiscount([tokenId, eventId, 1000n]); // 10%
+
+    // Give buyer a POAP
+    await mockPoap.write.mint([buyer.account.address, eventId]);
+
+    await usdc.write.approve([swag.address, USDC(200)], { account: buyer.account });
+    const treasuryBefore = await usdc.read.balanceOf([treasury.account.address]);
+    await swag.write.buy([tokenId, 1n], { account: buyer.account });
+    const treasuryAfter = await usdc.read.balanceOf([treasury.account.address]);
+
+    // Should pay 90 USDC (10% off 100)
+    assert.equal(treasuryAfter - treasuryBefore, USDC(90));
+  });
+
+  it("POAP discount: buyer without POAP pays full price", async function () {
+    const tokenId = 702n;
+    const price = USDC(100);
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+    await swag.write.addPoapDiscount([tokenId, 99999n, 2000n]); // 20% for event 99999
+
+    // buyer2 does NOT have this POAP
+    await usdc.write.approve([swag.address, USDC(200)], { account: buyer2.account });
+    const treasuryBefore = await usdc.read.balanceOf([treasury.account.address]);
+    await swag.write.buy([tokenId, 1n], { account: buyer2.account });
+    const treasuryAfter = await usdc.read.balanceOf([treasury.account.address]);
+
+    assert.equal(treasuryAfter - treasuryBefore, price);
+  });
+
+  it("Remove POAP discount: buyer pays full price after removal", async function () {
+    const tokenId = 703n;
+    const price = USDC(100);
+    const eventId = 55555n;
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+    await swag.write.addPoapDiscount([tokenId, eventId, 5000n]); // 50%
+    await mockPoap.write.mint([buyer.account.address, eventId]);
+
+    // Remove the discount (index 0)
+    await swag.write.removePoapDiscount([tokenId, 0n]);
+
+    await usdc.write.approve([swag.address, USDC(200)], { account: buyer.account });
+    const treasuryBefore = await usdc.read.balanceOf([treasury.account.address]);
+    await swag.write.buy([tokenId, 1n], { account: buyer.account });
+    const treasuryAfter = await usdc.read.balanceOf([treasury.account.address]);
+
+    assert.equal(treasuryAfter - treasuryBefore, price);
+  });
+
+  it("Holder discount (percentage): NFT holder gets discount", async function () {
+    const tokenId = 704n;
+    const price = USDC(100);
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+    // DiscountType.Percentage = 0
+    await swag.write.addHolderDiscount([tokenId, mockNft.address, 0, 2000n]); // 20%
+
+    // Give buyer an NFT
+    await mockNft.write.mint([buyer.account.address]);
+
+    await usdc.write.approve([swag.address, USDC(200)], { account: buyer.account });
+    const treasuryBefore = await usdc.read.balanceOf([treasury.account.address]);
+    await swag.write.buy([tokenId, 1n], { account: buyer.account });
+    const treasuryAfter = await usdc.read.balanceOf([treasury.account.address]);
+
+    // Should pay 80 USDC (20% off 100)
+    assert.equal(treasuryAfter - treasuryBefore, USDC(80));
+  });
+
+  it("Holder discount (fixed): holder gets fixed amount off", async function () {
+    const tokenId = 705n;
+    const price = USDC(100);
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+    // DiscountType.Fixed = 1, value = 15 USDC
+    await swag.write.addHolderDiscount([tokenId, mockNft.address, 1, USDC(15)]);
+
+    // buyer already has NFT from previous test
+    await usdc.write.approve([swag.address, USDC(200)], { account: buyer.account });
+    const treasuryBefore = await usdc.read.balanceOf([treasury.account.address]);
+    await swag.write.buy([tokenId, 1n], { account: buyer.account });
+    const treasuryAfter = await usdc.read.balanceOf([treasury.account.address]);
+
+    // Should pay 85 USDC (100 - 15 fixed)
+    assert.equal(treasuryAfter - treasuryBefore, USDC(85));
+  });
+
+  it("Holder without token pays full price", async function () {
+    const tokenId = 706n;
+    const price = USDC(100);
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+    await swag.write.addHolderDiscount([tokenId, mockNft.address, 0, 2000n]); // 20%
+
+    // buyer2 does NOT have the NFT
+    await usdc.write.approve([swag.address, USDC(200)], { account: buyer2.account });
+    const treasuryBefore = await usdc.read.balanceOf([treasury.account.address]);
+    await swag.write.buy([tokenId, 1n], { account: buyer2.account });
+    const treasuryAfter = await usdc.read.balanceOf([treasury.account.address]);
+
+    assert.equal(treasuryAfter - treasuryBefore, price);
+  });
+
+  it("Additive stacking: POAP 10% + holder 20% = 30% off", async function () {
+    const tokenId = 707n;
+    const price = USDC(100);
+    const eventId = 77777n;
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+    await swag.write.addPoapDiscount([tokenId, eventId, 1000n]); // 10%
+    await swag.write.addHolderDiscount([tokenId, mockNft.address, 0, 2000n]); // 20%
+
+    // buyer has NFT (from earlier) + give POAP
+    await mockPoap.write.mint([buyer.account.address, eventId]);
+
+    await usdc.write.approve([swag.address, USDC(200)], { account: buyer.account });
+    const treasuryBefore = await usdc.read.balanceOf([treasury.account.address]);
+    await swag.write.buy([tokenId, 1n], { account: buyer.account });
+    const treasuryAfter = await usdc.read.balanceOf([treasury.account.address]);
+
+    // Should pay 70 USDC (30% off 100)
+    assert.equal(treasuryAfter - treasuryBefore, USDC(70));
+  });
+
+  it("100% discount: POAP 50% + holder 50% = free", async function () {
+    const tokenId = 708n;
+    const price = USDC(100);
+    const eventId = 88888n;
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+    await swag.write.addPoapDiscount([tokenId, eventId, 5000n]); // 50%
+    await swag.write.addHolderDiscount([tokenId, mockNft.address, 0, 5000n]); // 50%
+
+    await mockPoap.write.mint([buyer.account.address, eventId]);
+
+    const buyerUsdcBefore = await usdc.read.balanceOf([buyer.account.address]);
+    await swag.write.buy([tokenId, 1n], { account: buyer.account });
+    const buyerUsdcAfter = await usdc.read.balanceOf([buyer.account.address]);
+
+    // No USDC spent
+    assert.equal(buyerUsdcAfter, buyerUsdcBefore);
+
+    // But NFT minted
+    const bal = await swag.read.balanceOf([buyer.account.address, tokenId]);
+    assert.equal(bal, 1n);
+  });
+
+  it("Over 100% discount caps at free (no revert)", async function () {
+    const tokenId = 709n;
+    const price = USDC(100);
+    const eventId = 99998n;
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+    await swag.write.addPoapDiscount([tokenId, eventId, 6000n]); // 60%
+    await swag.write.addHolderDiscount([tokenId, mockNft.address, 0, 6000n]); // 60%
+
+    await mockPoap.write.mint([buyer.account.address, eventId]);
+
+    const buyerUsdcBefore = await usdc.read.balanceOf([buyer.account.address]);
+    await swag.write.buy([tokenId, 1n], { account: buyer.account });
+    const buyerUsdcAfter = await usdc.read.balanceOf([buyer.account.address]);
+
+    assert.equal(buyerUsdcAfter, buyerUsdcBefore);
+    const bal = await swag.read.balanceOf([buyer.account.address, tokenId]);
+    assert.equal(bal, 1n);
+  });
+
+  it("Only POAP set, no holder discount", async function () {
+    const tokenId = 710n;
+    const price = USDC(100);
+    const eventId = 11111n;
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+    await swag.write.addPoapDiscount([tokenId, eventId, 1500n]); // 15%
+
+    await mockPoap.write.mint([buyer.account.address, eventId]);
+
+    await usdc.write.approve([swag.address, USDC(200)], { account: buyer.account });
+    const treasuryBefore = await usdc.read.balanceOf([treasury.account.address]);
+    await swag.write.buy([tokenId, 1n], { account: buyer.account });
+    const treasuryAfter = await usdc.read.balanceOf([treasury.account.address]);
+
+    assert.equal(treasuryAfter - treasuryBefore, USDC(85));
+  });
+
+  it("Only holder set, no POAP discount", async function () {
+    const tokenId = 711n;
+    const price = USDC(100);
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+    await swag.write.addHolderDiscount([tokenId, mockNft.address, 0, 2500n]); // 25%
+
+    // buyer has NFT from earlier
+    await usdc.write.approve([swag.address, USDC(200)], { account: buyer.account });
+    const treasuryBefore = await usdc.read.balanceOf([treasury.account.address]);
+    await swag.write.buy([tokenId, 1n], { account: buyer.account });
+    const treasuryAfter = await usdc.read.balanceOf([treasury.account.address]);
+
+    assert.equal(treasuryAfter - treasuryBefore, USDC(75));
+  });
+
+  it("getDiscountedPrice view returns correct price", async function () {
+    const tokenId = 712n;
+    const price = USDC(200);
+    const eventId = 22222n;
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+    await swag.write.addPoapDiscount([tokenId, eventId, 1000n]); // 10%
+    await swag.write.addHolderDiscount([tokenId, mockNft.address, 0, 500n]); // 5%
+
+    await mockPoap.write.mint([buyer.account.address, eventId]);
+
+    const discounted = await swag.read.getDiscountedPrice([tokenId, buyer.account.address]);
+    // 15% off 200 = 170
+    assert.equal(discounted, USDC(170));
+
+    // buyer2 has no POAP or NFT — full price
+    const full = await swag.read.getDiscountedPrice([tokenId, buyer2.account.address]);
+    assert.equal(full, price);
+  });
+
+  it("Admin-only access on discount functions", async function () {
+    const tokenId = 713n;
+    await swag.write.setVariant([tokenId, USDC(10), 10n, true]);
+
+    try {
+      await swag.write.addPoapDiscount([tokenId, 1n, 100n], { account: buyer.account });
+      assert.fail("Should revert for non-admin");
+    } catch (e: any) {
+      assert(e.message.includes("AccessControl"));
+    }
+
+    try {
+      await swag.write.addHolderDiscount([tokenId, mockNft.address, 0, 100n], { account: buyer.account });
+      assert.fail("Should revert for non-admin");
+    } catch (e: any) {
+      assert(e.message.includes("AccessControl"));
+    }
+  });
+
+  it("Remove holder discount: buyer pays full price after removal", async function () {
+    const tokenId = 714n;
+    const price = USDC(100);
+
+    await swag.write.setVariant([tokenId, price, 100n, true]);
+    await swag.write.addHolderDiscount([tokenId, mockNft.address, 0, 3000n]); // 30%
+
+    // Remove it
+    await swag.write.removeHolderDiscount([tokenId, 0n]);
+
+    await usdc.write.approve([swag.address, USDC(200)], { account: buyer.account });
+    const treasuryBefore = await usdc.read.balanceOf([treasury.account.address]);
+    await swag.write.buy([tokenId, 1n], { account: buyer.account });
     const treasuryAfter = await usdc.read.balanceOf([treasury.account.address]);
 
     assert.equal(treasuryAfter - treasuryBefore, price);

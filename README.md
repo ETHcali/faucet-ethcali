@@ -53,10 +53,12 @@ npm test                 # Run all 88 tests
 npm run deploy:base      # Deploy to Base
 npm run deploy:ethereum  # Deploy to Ethereum
 npm run deploy:unichain  # Deploy to Unichain
+npm run deploy:optimism  # Deploy to Optimism
 
 npm run verify:base      # Verify on Basescan
 npm run verify:ethereum  # Verify on Etherscan
 npm run verify:unichain  # Verify on Uniscan
+npm run verify:optimism  # Verify on Optimism Etherscan
 
 npm run setup:frontend   # Generate ABIs & addresses for frontend
 ```
@@ -79,6 +81,7 @@ Frontend integration summary: [FRONTEND_CHANGES.md](FRONTEND_CHANGES.md)
 | Ethereum Mainnet | 1 |
 | Base Mainnet | 8453 |
 | Unichain Mainnet | 130 |
+| Optimism Mainnet | 10 |
 
 ## License
 

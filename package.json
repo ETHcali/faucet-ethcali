@@ -8,10 +8,12 @@
     "deploy:base": "hardhat run scripts/deploy-all.ts --network base",
     "deploy:ethereum": "hardhat run scripts/deploy-all.ts --network ethereum",
     "deploy:unichain": "hardhat run scripts/deploy-all.ts --network unichain",
+    "deploy:optimism": "hardhat run scripts/deploy-all.ts --network optimism",
     "setup:frontend": "hardhat run scripts/setup-frontend.ts",
     "verify:base": "hardhat run scripts/verify-contracts.ts --network base",
     "verify:ethereum": "hardhat run scripts/verify-contracts.ts --network ethereum",
-    "verify:unichain": "hardhat run scripts/verify-contracts.ts --network unichain"
+    "verify:unichain": "hardhat run scripts/verify-contracts.ts --network unichain",
+    "verify:optimism": "hardhat run scripts/verify-contracts.ts --network optimism"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-ignition": "^3.0.6",

@@ -65,6 +65,12 @@ export default defineConfig({
       url: configVariable("UNICHAIN_RPC_URL"),
       accounts: [configVariable("PRIVATE_KEY")],
     },
+    optimism: {
+      type: "http",
+      chainType: "l1",
+      url: configVariable("OPTIMISM_RPC_URL"),
+      accounts: [configVariable("PRIVATE_KEY")],
+    },
   },
   verify: {
     etherscan: {
@@ -76,6 +82,7 @@ export default defineConfig({
       mainnet: process.env.ETHERSCAN_API_KEY || "",
       base: process.env.BASESCAN_API || "",
       unichain: process.env.UNICHAIN_API_KEY || "",
+      optimism: process.env.OPTIMISM_API_KEY || "",
     },
     customChains: [
       {
@@ -92,6 +99,14 @@ export default defineConfig({
         urls: {
           apiURL: "https://api.uniscan.xyz/api",
           browserURL: "https://uniscan.xyz",
+        },
+      },
+      {
+        network: "optimism",
+        chainId: 10,
+        urls: {
+          apiURL: "https://api-optimistic.etherscan.io/api",
+          browserURL: "https://optimistic.etherscan.io",
         },
       },
     ],

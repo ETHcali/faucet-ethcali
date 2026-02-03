@@ -102,17 +102,19 @@ async function main() {
 
   // Verify Swag1155
   console.log(`\n📝 Verifying Swag1155 at ${deployment.swag1155}...`);
+  const POAP_ADDRESS = "0x22C1f6050E56d2876009903609a2cC3fEf83B415";
   const swagArgs = [
     "ipfs://",  // baseURI - must match deploy script
     deployment.config.usdcAddress,
     deployment.config.swagTreasury,
     deployment.config.swagAdmin,
+    POAP_ADDRESS,
   ];
   console.log(`   Constructor args: ${JSON.stringify(swagArgs)}`);
 
   try {
     execSync(
-      `npx hardhat verify --network ${networkName} ${deployment.swag1155} "${swagArgs[0]}" "${swagArgs[1]}" "${swagArgs[2]}" "${swagArgs[3]}"`,
+      `npx hardhat verify --network ${networkName} ${deployment.swag1155} "${swagArgs[0]}" "${swagArgs[1]}" "${swagArgs[2]}" "${swagArgs[3]}" "${swagArgs[4]}"`,
       { stdio: "inherit", cwd: join(__dirname, "..") }
     );
     console.log(`✅ Swag1155 verified`);
@@ -127,6 +129,7 @@ async function main() {
     base: "https://basescan.org/address",
     ethereum: "https://etherscan.io/address",
     unichain: "https://uniscan.xyz/address",
+    optimism: "https://optimistic.etherscan.io/address",
   };
   const explorerUrl = explorerUrls[networkName] || "";
 

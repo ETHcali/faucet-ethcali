@@ -3,8 +3,8 @@
 **Complete API reference** for frontend integration with the Swag1155 ERC-1155 smart contract.
 
 **Contract**: `contracts/Swag1155.sol`
-**Version**: 2.1 (with Redemption Flow)
-**Last Updated**: January 2026
+**Version**: 2.2 (with Discount System)
+**Last Updated**: February 2026
 
 ---
 
@@ -13,13 +13,14 @@
 1. [Overview](#overview)
 2. [UI Components Map](#ui-components-map)
 3. [Data Structures](#data-structures)
-4. [State Variables](#state-variables)
-5. [Admin Functions](#admin-functions)
-6. [User Functions](#user-functions)
-7. [View Functions](#view-functions)
-8. [Events](#events)
-9. [Error Messages](#error-messages)
-10. [Frontend Integration Examples](#frontend-integration-examples)
+4. [Discount System](#discount-system)
+5. [State Variables](#state-variables)
+6. [Admin Functions](#admin-functions)
+7. [User Functions](#user-functions)
+8. [View Functions](#view-functions)
+9. [Events](#events)
+10. [Error Messages](#error-messages)
+11. [Frontend Integration Examples](#frontend-integration-examples)
 
 ---
 
@@ -31,8 +32,9 @@ Swag1155 is an ERC-1155 multi-token contract for managing physical merchandise (
 - **Per-token metadata** (IPFS URIs)
 - **Physical redemption tracking** (3-state flow)
 - **Royalty distribution** (automatic payment splits to artists)
+- **Dynamic discount system** (POAP-based and token holder discounts)
 
-**Note:** When users purchase swag, payments are automatically split between royalty recipients (e.g., artists) and the treasury. The buyer only needs to approve the total USDC amount.
+**Note:** When users purchase swag, payments are automatically split between royalty recipients (e.g., artists) and the treasury. The buyer only needs to approve the total USDC amount. Discounts are automatically applied based on POAP ownership and token holdings, and can stack additively up to 100% off.
 
 ### Role Hierarchy
 
@@ -149,6 +151,10 @@ Swag1155 is an ERC-1155 multi-token contract for managing physical merchandise (
 | **[Redeem Physical]** | `redeem()` | User | tokenId |
 | **[Add Royalty]** | `addRoyalty()` | Admin | tokenId, recipient, percentage |
 | **[Clear Royalties]** | `clearRoyalties()` | Admin | tokenId |
+| **[Add POAP Discount]** | `addPoapDiscount()` | Admin | tokenId, eventId, discountBps |
+| **[Remove POAP Discount]** | `removePoapDiscount()` | Admin | tokenId, index |
+| **[Add Holder Discount]** | `addHolderDiscount()` | Admin | tokenId, token, discountType, value |
+| **[Remove Holder Discount]** | `removeHolderDiscount()` | Admin | tokenId, index |
 
 ---
 
@@ -241,6 +247,421 @@ const royaltyAmount = (price * royalty.percentage) / 10000n;
 
 ---
 
+## Discount System
+
+Swag1155 supports a flexible discount system that allows admins to configure per-product discounts based on POAP ownership or token holdings. Discounts are automatically applied during purchase and can stack additively.
+
+### Constructor
+
+The contract constructor now requires 5 parameters:
+
+```solidity
+constructor(
+    address _usdc,
+    address _treasury,
+    address initialAdmin,
+    address superAdmin,
+    address _poap
+)
+```
+
+| Parameter | Type | Description | Example |
+|-----------|------|-------------|---------|
+| `_usdc` | `address` | USDC token contract address | `0xUSDC...` |
+| `_treasury` | `address` | Treasury wallet address | `0xTreasury...` |
+| `initialAdmin` | `address` | Initial admin with ADMIN_ROLE | `0xAdmin...` |
+| `superAdmin` | `address` | Super admin with DEFAULT_ADMIN_ROLE | `0xSuperAdmin...` |
+| `_poap` | `address` | POAP contract address (immutable) | `0xPOAP...` |
+
+The `_poap` parameter sets the immutable `POAP_CONTRACT` state variable used for POAP discount validation.
+
+---
+
+### POAP Discounts
+
+Admins can configure discounts for users who hold specific POAP event tokens.
+
+#### addPoapDiscount
+
+Add a POAP-based discount for a specific product.
+
+```solidity
+function addPoapDiscount(
+    uint256 tokenId,
+    uint256 eventId,
+    uint256 discountBps
+) external onlyRole(ADMIN_ROLE)
+```
+
+| Parameter | Type | Description | Example |
+|-----------|------|-------------|---------|
+| `tokenId` | `uint256` | Product token ID | `1001` |
+| `eventId` | `uint256` | POAP event ID | `123456` |
+| `discountBps` | `uint256` | Discount in basis points | `500` (= 5% off) |
+
+**Requirements:**
+- Caller must have `ADMIN_ROLE`
+- `discountBps` must be > 0
+
+**Emits:** `PoapDiscountAdded(uint256 indexed tokenId, uint256 eventId, uint256 discountBps)`
+
+**Frontend:**
+```typescript
+await writeContract({
+  address: swag1155,
+  abi: Swag1155ABI,
+  functionName: 'addPoapDiscount',
+  args: [
+    1001n,      // tokenId
+    123456n,    // eventId (POAP event)
+    500n,       // discountBps (5% off)
+  ],
+});
+```
+
+---
+
+#### removePoapDiscount
+
+Remove a POAP discount by array index.
+
+```solidity
+function removePoapDiscount(
+    uint256 tokenId,
+    uint256 index
+) external onlyRole(ADMIN_ROLE)
+```
+
+| Parameter | Type | Description | Example |
+|-----------|------|-------------|---------|
+| `tokenId` | `uint256` | Product token ID | `1001` |
+| `index` | `uint256` | Array index of discount to remove | `0` |
+
+**Requirements:**
+- Caller must have `ADMIN_ROLE`
+- Index must be valid
+
+**Emits:** `PoapDiscountRemoved(uint256 indexed tokenId, uint256 eventId)`
+
+**Frontend:**
+```typescript
+await writeContract({
+  address: swag1155,
+  abi: Swag1155ABI,
+  functionName: 'removePoapDiscount',
+  args: [1001n, 0n], // Remove first POAP discount
+});
+```
+
+---
+
+#### getPoapDiscounts
+
+View all POAP discounts configured for a product.
+
+```solidity
+function getPoapDiscounts(uint256 tokenId) external view returns (PoapDiscount[] memory)
+```
+
+| Parameter | Type | Description | Example |
+|-----------|------|-------------|---------|
+| `tokenId` | `uint256` | Product token ID | `1001` |
+
+**Returns:** `PoapDiscount[]` - Array of POAP discounts
+
+**PoapDiscount struct:**
+```solidity
+struct PoapDiscount {
+    uint256 eventId;     // POAP event ID
+    uint256 discountBps; // Discount percentage in basis points
+    bool active;         // Whether discount is active
+}
+```
+
+**Frontend:**
+```typescript
+const { data: poapDiscounts } = useReadContract({
+  address: swag1155,
+  abi: Swag1155ABI,
+  functionName: 'getPoapDiscounts',
+  args: [1001n],
+});
+
+// poapDiscounts = [
+//   { eventId: 123456n, discountBps: 500n, active: true },   // 5% off
+//   { eventId: 789012n, discountBps: 1000n, active: true },  // 10% off
+// ]
+```
+
+---
+
+### Holder Discounts
+
+Admins can configure discounts for users who hold specific ERC-20, ERC-721, or ERC-1155 tokens.
+
+#### addHolderDiscount
+
+Add a token holder discount for a specific product.
+
+```solidity
+function addHolderDiscount(
+    uint256 tokenId,
+    address token,
+    DiscountType discountType,
+    uint256 value
+) external onlyRole(ADMIN_ROLE)
+```
+
+| Parameter | Type | Description | Example |
+|-----------|------|-------------|---------|
+| `tokenId` | `uint256` | Product token ID | `1001` |
+| `token` | `address` | Token contract address | `0xToken...` |
+| `discountType` | `DiscountType` | Percentage (0) or Fixed (1) | `0` (Percentage) |
+| `value` | `uint256` | Discount value (bps for Percentage, USDC for Fixed) | `500` (5% off) or `5000000` ($5 off) |
+
+**DiscountType enum:**
+```solidity
+enum DiscountType {
+    Percentage, // 0 - Discount in basis points
+    Fixed       // 1 - Fixed amount in USDC (6 decimals)
+}
+```
+
+**Requirements:**
+- Caller must have `ADMIN_ROLE`
+- `token` cannot be zero address
+- `value` must be > 0
+
+**Emits:** `HolderDiscountAdded(uint256 indexed tokenId, address indexed token, DiscountType discountType, uint256 value)`
+
+**Frontend:**
+```typescript
+// Add 10% percentage discount for NFT holders
+await writeContract({
+  address: swag1155,
+  abi: Swag1155ABI,
+  functionName: 'addHolderDiscount',
+  args: [
+    1001n,                    // tokenId
+    '0xNFTAddress...',        // token
+    0,                        // discountType (Percentage)
+    1000n,                    // value (10% off)
+  ],
+});
+
+// Add $5 fixed discount for ERC20 holders
+await writeContract({
+  address: swag1155,
+  abi: Swag1155ABI,
+  functionName: 'addHolderDiscount',
+  args: [
+    1001n,                    // tokenId
+    '0xERC20Address...',      // token
+    1,                        // discountType (Fixed)
+    5000000n,                 // value ($5 off)
+  ],
+});
+```
+
+---
+
+#### removeHolderDiscount
+
+Remove a holder discount by array index.
+
+```solidity
+function removeHolderDiscount(
+    uint256 tokenId,
+    uint256 index
+) external onlyRole(ADMIN_ROLE)
+```
+
+| Parameter | Type | Description | Example |
+|-----------|------|-------------|---------|
+| `tokenId` | `uint256` | Product token ID | `1001` |
+| `index` | `uint256` | Array index of discount to remove | `0` |
+
+**Requirements:**
+- Caller must have `ADMIN_ROLE`
+- Index must be valid
+
+**Emits:** `HolderDiscountRemoved(uint256 indexed tokenId, address indexed token)`
+
+**Frontend:**
+```typescript
+await writeContract({
+  address: swag1155,
+  abi: Swag1155ABI,
+  functionName: 'removeHolderDiscount',
+  args: [1001n, 0n], // Remove first holder discount
+});
+```
+
+---
+
+#### getHolderDiscounts
+
+View all holder discounts configured for a product.
+
+```solidity
+function getHolderDiscounts(uint256 tokenId) external view returns (HolderDiscount[] memory)
+```
+
+| Parameter | Type | Description | Example |
+|-----------|------|-------------|---------|
+| `tokenId` | `uint256` | Product token ID | `1001` |
+
+**Returns:** `HolderDiscount[]` - Array of holder discounts
+
+**HolderDiscount struct:**
+```solidity
+struct HolderDiscount {
+    address token;           // Token contract address
+    DiscountType discountType; // Percentage (0) or Fixed (1)
+    uint256 value;           // Discount value
+    bool active;             // Whether discount is active
+}
+```
+
+**Frontend:**
+```typescript
+const { data: holderDiscounts } = useReadContract({
+  address: swag1155,
+  abi: Swag1155ABI,
+  functionName: 'getHolderDiscounts',
+  args: [1001n],
+});
+
+// holderDiscounts = [
+//   { token: '0xNFT...', discountType: 0, value: 1000n, active: true },   // 10% off
+//   { token: '0xERC20...', discountType: 1, value: 5000000n, active: true }, // $5 off
+// ]
+```
+
+---
+
+### Price Calculation with Discounts
+
+The discount system automatically calculates the final price based on all qualifying discounts.
+
+#### getDiscountedPrice
+
+Calculate the final price after applying all qualifying discounts for a buyer.
+
+```solidity
+function getDiscountedPrice(
+    uint256 tokenId,
+    address buyer
+) public view returns (uint256)
+```
+
+| Parameter | Type | Description | Example |
+|-----------|------|-------------|---------|
+| `tokenId` | `uint256` | Product token ID | `1001` |
+| `buyer` | `address` | Buyer address to check discounts | `0xBuyer...` |
+
+**Returns:** `uint256` - Final price in USDC base units (6 decimals)
+
+**Discount Stacking Rules:**
+- All qualifying discounts are **additive** (they add together)
+- POAP discounts: Buyer receives discount if they hold the POAP event token
+- Holder discounts: Buyer receives discount if they hold the specified token
+- Percentage discounts: Applied as basis points (500 bps = 5%)
+- Fixed discounts: Subtracted as USDC amount (6 decimals)
+- If total discounts >= 100%, final price is 0 (free)
+- Discounts cannot result in negative prices (capped at 0)
+
+**Example Calculation:**
+```
+Original Price: $25 (25000000 in base units)
+
+Qualifying Discounts:
+- POAP event 123456: 5% off (500 bps)
+- POAP event 789012: 10% off (1000 bps)
+- NFT holder: 10% off (1000 bps)
+- ERC20 holder: $5 fixed (5000000 base units)
+
+Total:
+- Percentage discounts: 5% + 10% + 10% = 25% (2500 bps)
+- Fixed discounts: $5
+- Price after percentage: $25 * 0.75 = $18.75
+- Price after fixed: $18.75 - $5 = $13.75
+
+Final Price: $13.75 (13750000 in base units)
+```
+
+**Frontend:**
+```typescript
+const { data: finalPrice } = useReadContract({
+  address: swag1155,
+  abi: Swag1155ABI,
+  functionName: 'getDiscountedPrice',
+  args: [1001n, buyerAddress],
+});
+
+// Display price
+const priceUSD = Number(finalPrice) / 1e6; // 13.75
+
+// Calculate savings
+const { data: variant } = useReadContract({
+  address: swag1155,
+  abi: Swag1155ABI,
+  functionName: 'getVariant',
+  args: [1001n],
+});
+
+const originalPrice = Number(variant.price) / 1e6; // 25.00
+const savings = originalPrice - priceUSD; // 11.25
+const savingsPercent = (savings / originalPrice) * 100; // 45%
+```
+
+---
+
+### Automatic Discount Application
+
+The `buy()` and `buyBatch()` functions automatically use `getDiscountedPrice()` to calculate the final price. No additional frontend changes are needed.
+
+**Important:**
+- If the total discounted price is 0 (100% discount), **no USDC transfer occurs**
+- The buyer still receives the NFT tokens
+- The `DiscountApplied` event is emitted with price details
+
+**Frontend Integration:**
+```typescript
+// Purchase with automatic discount
+const handlePurchase = async () => {
+  // Get discounted price
+  const finalPrice = await readContract({
+    address: swag1155,
+    abi: Swag1155ABI,
+    functionName: 'getDiscountedPrice',
+    args: [tokenId, buyerAddress],
+  });
+
+  const totalPrice = finalPrice * quantity;
+
+  // Approve USDC (only if price > 0)
+  if (totalPrice > 0n) {
+    await writeContract({
+      address: usdcAddress,
+      abi: ERC20ABI,
+      functionName: 'approve',
+      args: [swag1155, totalPrice],
+    });
+  }
+
+  // Buy (discounts applied automatically)
+  await writeContract({
+    address: swag1155,
+    abi: Swag1155ABI,
+    functionName: 'buy',
+    args: [tokenId, quantity],
+  });
+};
+```
+
+---
+
 ## State Variables
 
 ### Public Variables
@@ -249,6 +670,7 @@ const royaltyAmount = (price * royalty.percentage) / 10000n;
 |----------|------|-------------|---------------|
 | `usdc` | `address` | USDC token contract address | `useReadContract({ functionName: 'usdc' })` |
 | `treasury` | `address` | Address receiving USDC payments | `useReadContract({ functionName: 'treasury' })` |
+| `POAP_CONTRACT` | `address` | POAP token contract address (immutable) | `useReadContract({ functionName: 'POAP_CONTRACT' })` |
 | `variants` | `mapping(uint256 => Variant)` | Product variant data by tokenId | `useReadContract({ functionName: 'variants', args: [tokenId] })` |
 | `redemptions` | `mapping(uint256 => mapping(address => RedemptionStatus))` | Redemption status by tokenId and owner | `useReadContract({ functionName: 'redemptions', args: [tokenId, owner] })` |
 | `royaltyRecipients` | `mapping(uint256 => RoyaltyInfo[])` | Array of royalty recipients per tokenId | `useReadContract({ functionName: 'royaltyRecipients', args: [tokenId, index] })` |
@@ -651,7 +1073,7 @@ await writeContract({
 
 ### buy
 
-Purchase a single variant with USDC. Payment is automatically split: royalties are sent to recipients, and the remainder goes to the treasury.
+Purchase a single variant with USDC. Payment is automatically split: royalties are sent to recipients, and the remainder goes to the treasury. Discounts are automatically applied via `getDiscountedPrice()`.
 
 ```solidity
 function buy(uint256 tokenId, uint256 quantity) external nonReentrant
@@ -666,24 +1088,40 @@ function buy(uint256 tokenId, uint256 quantity) external nonReentrant
 - `quantity` must be > 0
 - Variant must be `active`
 - Sufficient supply: `minted + quantity <= maxSupply`
-- User must have approved USDC: `price * quantity`
+- User must have approved USDC: `discountedPrice * quantity`
 
-**Emits:** `Purchased(address indexed buyer, uint256 indexed tokenId, uint256 quantity, uint256 unitPrice, uint256 totalPrice)`
+**Emits:**
+- `Purchased(address indexed buyer, uint256 indexed tokenId, uint256 quantity, uint256 unitPrice, uint256 totalPrice)`
+- `DiscountApplied(address indexed buyer, uint256 indexed tokenId, uint256 originalPrice, uint256 finalPrice)` (if discounts applied)
 
-**Note:** Payment distribution happens automatically within the contract. If the token has royalty recipients configured, they receive their percentage first, and the treasury receives the remainder. The buyer only needs to approve the total USDC amount (`price * quantity`) - no frontend changes required.
+**Note:**
+- Payment distribution happens automatically within the contract. If the token has royalty recipients configured, they receive their percentage first, and the treasury receives the remainder.
+- Discounts are automatically applied based on buyer's POAP ownership and token holdings. Use `getDiscountedPrice()` to calculate the actual price.
+- If the total discounted price is 0 (100% discount), no USDC transfer occurs, but the buyer still receives the NFT.
 
 **Frontend:**
 ```typescript
-// Step 1: Approve USDC (buyer approves total amount)
-const totalPrice = variant.price * quantity;
-await writeContract({
-  address: usdcAddress,
-  abi: ERC20ABI,
-  functionName: 'approve',
-  args: [swag1155, totalPrice],
+// Step 1: Get discounted price
+const discountedPrice = await readContract({
+  address: swag1155,
+  abi: Swag1155ABI,
+  functionName: 'getDiscountedPrice',
+  args: [tokenId, buyerAddress],
 });
 
-// Step 2: Buy (payment automatically split to royalty recipients + treasury)
+const totalPrice = discountedPrice * quantity;
+
+// Step 2: Approve USDC (only if price > 0)
+if (totalPrice > 0n) {
+  await writeContract({
+    address: usdcAddress,
+    abi: ERC20ABI,
+    functionName: 'approve',
+    args: [swag1155, totalPrice],
+  });
+}
+
+// Step 3: Buy (discounts applied automatically)
 await writeContract({
   address: swag1155,
   abi: Swag1155ABI,
@@ -696,7 +1134,7 @@ await writeContract({
 
 ### buyBatch
 
-Purchase multiple variants in a single transaction.
+Purchase multiple variants in a single transaction. Discounts are automatically applied via `getDiscountedPrice()` for each variant.
 
 ```solidity
 function buyBatch(
@@ -716,30 +1154,42 @@ function buyBatch(
 - Each quantity must be > 0
 - Each variant must be `active`
 - Sufficient supply for each variant
-- User must have approved total USDC
+- User must have approved total discounted USDC
 
-**Emits:** `PurchasedBatch(address indexed buyer, uint256[] tokenIds, uint256[] quantities, uint256 totalPrice)`
+**Emits:**
+- `PurchasedBatch(address indexed buyer, uint256[] tokenIds, uint256[] quantities, uint256 totalPrice)`
+- `DiscountApplied(address indexed buyer, uint256 indexed tokenId, uint256 originalPrice, uint256 finalPrice)` (for each discounted item)
+
+**Note:** If the total discounted price is 0 (100% discount on all items), no USDC transfer occurs.
 
 **Frontend:**
 ```typescript
-// Calculate total price
+// Calculate total discounted price
 const tokenIds = [1001n, 1002n, 1003n];
 const quantities = [1n, 2n, 1n];
 let totalPrice = 0n;
+
 for (let i = 0; i < tokenIds.length; i++) {
-  const variant = await getVariant(tokenIds[i]);
-  totalPrice += variant.price * quantities[i];
+  const discountedPrice = await readContract({
+    address: swag1155,
+    abi: Swag1155ABI,
+    functionName: 'getDiscountedPrice',
+    args: [tokenIds[i], buyerAddress],
+  });
+  totalPrice += discountedPrice * quantities[i];
 }
 
-// Approve total
-await writeContract({
-  address: usdcAddress,
-  abi: ERC20ABI,
-  functionName: 'approve',
-  args: [swag1155, totalPrice],
-});
+// Approve total (only if price > 0)
+if (totalPrice > 0n) {
+  await writeContract({
+    address: usdcAddress,
+    abi: ERC20ABI,
+    functionName: 'approve',
+    args: [swag1155, totalPrice],
+  });
+}
 
-// Buy batch
+// Buy batch (discounts applied automatically)
 await writeContract({
   address: swag1155,
   abi: Swag1155ABI,
@@ -1026,6 +1476,16 @@ const { data: balance } = useReadContract({
 | `RoyaltyAdded` | `tokenId`, `recipient`, `percentage` | Admin calls `addRoyalty()` |
 | `RoyaltiesCleared` | `tokenId` | Admin calls `clearRoyalties()` |
 
+### Discount Events
+
+| Event | Parameters | When Emitted |
+|-------|------------|--------------|
+| `PoapDiscountAdded` | `tokenId`, `eventId`, `discountBps` | Admin calls `addPoapDiscount()` |
+| `PoapDiscountRemoved` | `tokenId`, `eventId` | Admin calls `removePoapDiscount()` |
+| `HolderDiscountAdded` | `tokenId`, `token`, `discountType`, `value` | Admin calls `addHolderDiscount()` |
+| `HolderDiscountRemoved` | `tokenId`, `token` | Admin calls `removeHolderDiscount()` |
+| `DiscountApplied` | `buyer`, `tokenId`, `originalPrice`, `finalPrice` | User purchases with discount via `buy()` or `buyBatch()` |
+
 **Frontend Event Listening:**
 ```typescript
 import { useWatchContractEvent } from 'wagmi';
@@ -1052,6 +1512,20 @@ useWatchContractEvent({
     logs.forEach((log) => {
       const { owner, tokenId } = log.args;
       // Trigger shipping address collection
+    });
+  },
+});
+
+// Listen for discount events
+useWatchContractEvent({
+  address: swag1155,
+  abi: Swag1155ABI,
+  eventName: 'DiscountApplied',
+  onLogs(logs) {
+    logs.forEach((log) => {
+      const { buyer, tokenId, originalPrice, finalPrice } = log.args;
+      const savings = Number(originalPrice - finalPrice) / 1e6;
+      console.log(`${buyer} saved $${savings} on token ${tokenId}`);
     });
   },
 });
@@ -1101,20 +1575,30 @@ function PurchaseButton({ tokenId, quantity }: { tokenId: bigint; quantity: numb
     args: [tokenId],
   });
 
+  // Get discounted price
+  const { data: discountedPrice } = useReadContract({
+    address: SWAG1155_ADDRESS,
+    abi: Swag1155ABI,
+    functionName: 'getDiscountedPrice',
+    args: [tokenId, address],
+  });
+
   const handlePurchase = async () => {
-    if (!variant) return;
+    if (!variant || !discountedPrice) return;
 
-    const totalPrice = variant.price * BigInt(quantity);
+    const totalPrice = discountedPrice * BigInt(quantity);
 
-    // 1. Approve USDC
-    await writeContractAsync({
-      address: USDC_ADDRESS,
-      abi: ERC20ABI,
-      functionName: 'approve',
-      args: [SWAG1155_ADDRESS, totalPrice],
-    });
+    // 1. Approve USDC (only if price > 0)
+    if (totalPrice > 0n) {
+      await writeContractAsync({
+        address: USDC_ADDRESS,
+        abi: ERC20ABI,
+        functionName: 'approve',
+        args: [SWAG1155_ADDRESS, totalPrice],
+      });
+    }
 
-    // 2. Buy
+    // 2. Buy (discounts applied automatically)
     await writeContractAsync({
       address: SWAG1155_ADDRESS,
       abi: Swag1155ABI,
@@ -1125,10 +1609,23 @@ function PurchaseButton({ tokenId, quantity }: { tokenId: bigint; quantity: numb
     alert('Purchase successful!');
   };
 
+  // Calculate savings
+  const originalPrice = variant ? Number(variant.price * BigInt(quantity)) / 1e6 : 0;
+  const finalPrice = discountedPrice ? Number(discountedPrice * BigInt(quantity)) / 1e6 : 0;
+  const savings = originalPrice - finalPrice;
+  const hasSavings = savings > 0;
+
   return (
-    <button onClick={handlePurchase} disabled={!variant?.active}>
-      Buy {quantity} for ${variant ? Number(variant.price * BigInt(quantity)) / 1e6 : 0}
-    </button>
+    <div>
+      <button onClick={handlePurchase} disabled={!variant?.active}>
+        {finalPrice === 0 ? 'Claim Free!' : `Buy ${quantity} for $${finalPrice.toFixed(2)}`}
+      </button>
+      {hasSavings && (
+        <div style={{ color: 'green', fontSize: '0.9em' }}>
+          Save ${savings.toFixed(2)} ({((savings / originalPrice) * 100).toFixed(0)}% off)
+        </div>
+      )}
+    </div>
   );
 }
 ```

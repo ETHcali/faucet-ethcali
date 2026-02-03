@@ -4,9 +4,14 @@ pragma solidity ^0.8.28;
 import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
+interface IPOAP {
+    function balanceOf(address owner, uint256 eventId) external view returns (uint256);
+}
 
 /**
  * @title ETH Cali Swag (ERC-1155)
@@ -59,6 +64,30 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
     // Basis points denominator (10000 = 100%)
     uint256 public constant ROYALTY_DENOMINATOR = 10000;
 
+    // ---------- Discount System ----------
+
+    // POAP contract address (0x22C1f6050E56d2876009903609a2cC3fEf83B415 on all chains)
+    address public immutable POAP_CONTRACT;
+
+    enum DiscountType { Percentage, Fixed }
+
+    struct PoapDiscount {
+        uint256 eventId;
+        uint256 discountBps;   // basis points (1000 = 10%)
+        bool active;
+    }
+
+    struct HolderDiscount {
+        address token;          // ERC20/ERC721 contract address
+        DiscountType discountType;
+        uint256 value;          // bps for Percentage, USDC base units for Fixed
+        bool active;
+    }
+
+    // Per-tokenId discount tiers
+    mapping(uint256 => PoapDiscount[]) public poapDiscounts;
+    mapping(uint256 => HolderDiscount[]) public holderDiscounts;
+
     // Track known tokenIds for optional iteration (not required but helpful)
     using EnumerableSet for EnumerableSet.UintSet;
     EnumerableSet.UintSet private _tokenIds;
@@ -76,6 +105,11 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
     event RedemptionFulfilled(address indexed owner, uint256 indexed tokenId, address indexed admin);
     event RoyaltyAdded(uint256 indexed tokenId, address indexed recipient, uint256 percentage);
     event RoyaltiesCleared(uint256 indexed tokenId);
+    event PoapDiscountAdded(uint256 indexed tokenId, uint256 eventId, uint256 discountBps);
+    event PoapDiscountRemoved(uint256 indexed tokenId, uint256 eventId);
+    event HolderDiscountAdded(uint256 indexed tokenId, address indexed token, DiscountType discountType, uint256 value);
+    event HolderDiscountRemoved(uint256 indexed tokenId, address indexed token);
+    event DiscountApplied(address indexed buyer, uint256 indexed tokenId, uint256 originalPrice, uint256 finalPrice);
 
     /**
      * @notice Constructor
@@ -88,12 +122,14 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
         string memory baseURI,
         address _usdc,
         address _treasury,
-        address initialAdmin
+        address initialAdmin,
+        address _poap
     ) ERC1155(baseURI) {
         require(_usdc != address(0), "invalid USDC");
         require(_treasury != address(0), "invalid treasury");
         usdc = _usdc;
         treasury = _treasury;
+        POAP_CONTRACT = _poap;
 
         address admin = initialAdmin == address(0) ? msg.sender : initialAdmin;
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -235,6 +271,140 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
         return royaltyRecipients[tokenId];
     }
 
+    // ---------- Discount Management ----------
+
+    /**
+     * @notice Add a POAP-based discount for a specific product
+     * @param tokenId Product token ID
+     * @param eventId POAP event ID
+     * @param discountBps Discount in basis points (1000 = 10%)
+     */
+    function addPoapDiscount(uint256 tokenId, uint256 eventId, uint256 discountBps) external onlyRole(ADMIN_ROLE) {
+        require(discountBps > 0, "discount must be > 0");
+        require(discountBps <= ROYALTY_DENOMINATOR, "discount exceeds 100%");
+        poapDiscounts[tokenId].push(PoapDiscount({
+            eventId: eventId,
+            discountBps: discountBps,
+            active: true
+        }));
+        emit PoapDiscountAdded(tokenId, eventId, discountBps);
+    }
+
+    /**
+     * @notice Remove a POAP discount tier by index
+     */
+    function removePoapDiscount(uint256 tokenId, uint256 index) external onlyRole(ADMIN_ROLE) {
+        PoapDiscount[] storage discounts = poapDiscounts[tokenId];
+        require(index < discounts.length, "invalid index");
+        uint256 eventId = discounts[index].eventId;
+        discounts[index] = discounts[discounts.length - 1];
+        discounts.pop();
+        emit PoapDiscountRemoved(tokenId, eventId);
+    }
+
+    /**
+     * @notice Get all POAP discounts for a product
+     */
+    function getPoapDiscounts(uint256 tokenId) external view returns (PoapDiscount[] memory) {
+        return poapDiscounts[tokenId];
+    }
+
+    /**
+     * @notice Add a token-holder discount for a specific product
+     * @param tokenId Product token ID
+     * @param token ERC20/ERC721 contract address
+     * @param discountType Percentage or Fixed
+     * @param value Basis points for Percentage, USDC base units for Fixed
+     */
+    function addHolderDiscount(uint256 tokenId, address token, DiscountType discountType, uint256 value) external onlyRole(ADMIN_ROLE) {
+        require(token != address(0), "invalid token");
+        require(value > 0, "value must be > 0");
+        if (discountType == DiscountType.Percentage) {
+            require(value <= ROYALTY_DENOMINATOR, "discount exceeds 100%");
+        }
+        holderDiscounts[tokenId].push(HolderDiscount({
+            token: token,
+            discountType: discountType,
+            value: value,
+            active: true
+        }));
+        emit HolderDiscountAdded(tokenId, token, discountType, value);
+    }
+
+    /**
+     * @notice Remove a holder discount tier by index
+     */
+    function removeHolderDiscount(uint256 tokenId, uint256 index) external onlyRole(ADMIN_ROLE) {
+        HolderDiscount[] storage discounts = holderDiscounts[tokenId];
+        require(index < discounts.length, "invalid index");
+        address token = discounts[index].token;
+        discounts[index] = discounts[discounts.length - 1];
+        discounts.pop();
+        emit HolderDiscountRemoved(tokenId, token);
+    }
+
+    /**
+     * @notice Get all holder discounts for a product
+     */
+    function getHolderDiscounts(uint256 tokenId) external view returns (HolderDiscount[] memory) {
+        return holderDiscounts[tokenId];
+    }
+
+    /**
+     * @notice Calculate discounted price for a buyer (additive stacking)
+     * @param tokenId Product token ID
+     * @param buyer Buyer address
+     * @return finalPrice The price after all applicable discounts
+     */
+    function getDiscountedPrice(uint256 tokenId, address buyer) public view returns (uint256 finalPrice) {
+        uint256 basePrice = variants[tokenId].price;
+        if (basePrice == 0) return 0;
+
+        uint256 totalDiscountBps = 0;
+        uint256 fixedDiscount = 0;
+
+        // Check POAP discounts (additive)
+        PoapDiscount[] storage poaps = poapDiscounts[tokenId];
+        for (uint256 i = 0; i < poaps.length; i++) {
+            if (!poaps[i].active) continue;
+            try IPOAP(POAP_CONTRACT).balanceOf(buyer, poaps[i].eventId) returns (uint256 bal) {
+                if (bal > 0) {
+                    totalDiscountBps += poaps[i].discountBps;
+                }
+            } catch {}
+        }
+
+        // Check holder discounts (additive)
+        HolderDiscount[] storage holders = holderDiscounts[tokenId];
+        for (uint256 i = 0; i < holders.length; i++) {
+            if (!holders[i].active) continue;
+            uint256 balance;
+            try IERC721(holders[i].token).balanceOf(buyer) returns (uint256 bal) {
+                balance = bal;
+            } catch {
+                try IERC20(holders[i].token).balanceOf(buyer) returns (uint256 bal) {
+                    balance = bal;
+                } catch { continue; }
+            }
+            if (balance > 0) {
+                if (holders[i].discountType == DiscountType.Percentage) {
+                    totalDiscountBps += holders[i].value;
+                } else {
+                    fixedDiscount += holders[i].value;
+                }
+            }
+        }
+
+        // Apply additive discount (cap at 100%)
+        if (totalDiscountBps >= ROYALTY_DENOMINATOR) {
+            return 0;
+        }
+        uint256 percentOff = (basePrice * totalDiscountBps) / ROYALTY_DENOMINATOR;
+        finalPrice = basePrice - percentOff;
+        finalPrice = finalPrice > fixedDiscount ? finalPrice - fixedDiscount : 0;
+        return finalPrice;
+    }
+
     // ---------- Views ----------
 
     function remaining(uint256 tokenId) public view returns (uint256) {
@@ -304,14 +474,19 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
         require(v.active, "variant inactive");
         require(v.minted + quantity <= v.maxSupply, "exceeds supply");
 
-        uint256 total = v.price * quantity;
-        _distributePayment(tokenId, total);
+        uint256 unitPrice = getDiscountedPrice(tokenId, msg.sender);
+        uint256 total = unitPrice * quantity;
+        if (total > 0) {
+            _distributePayment(tokenId, total);
+        }
 
-        // Mint after successful payment
         v.minted += quantity;
         _mint(msg.sender, tokenId, quantity, "");
 
-        emit Purchased(msg.sender, tokenId, quantity, v.price, total);
+        emit Purchased(msg.sender, tokenId, quantity, unitPrice, total);
+        if (unitPrice < v.price) {
+            emit DiscountApplied(msg.sender, tokenId, v.price, unitPrice);
+        }
     }
 
     function buyBatch(uint256[] calldata tokenIds, uint256[] calldata quantities) external nonReentrant {
@@ -327,10 +502,12 @@ contract Swag1155 is ERC1155, AccessControl, ReentrancyGuard {
             Variant storage v = variants[tokenId];
             require(v.active, "variant inactive");
             require(v.minted + qty <= v.maxSupply, "exceeds supply");
-            uint256 itemTotal = v.price * qty;
+            uint256 unitPrice = getDiscountedPrice(tokenId, msg.sender);
+            uint256 itemTotal = unitPrice * qty;
             grandTotal += itemTotal;
-            // Distribute per-token royalties
-            _distributePayment(tokenId, itemTotal);
+            if (itemTotal > 0) {
+                _distributePayment(tokenId, itemTotal);
+            }
         }
 
         // Update supply and mint

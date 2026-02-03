@@ -51,15 +51,17 @@ const NETWORK_CHAIN_IDS: Record<string, number> = {
   base: 8453,
   ethereum: 1,
   unichain: 130,
+  optimism: 10,
 };
 
 const NETWORK_NAMES: Record<string, string> = {
   base: "Base Mainnet",
   ethereum: "Ethereum Mainnet",
   unichain: "Unichain Mainnet",
+  optimism: "Optimism Mainnet",
 };
 
-const SUPPORTED_NETWORKS = ["base", "ethereum", "unichain"];
+const SUPPORTED_NETWORKS = ["base", "ethereum", "unichain", "optimism"];
 
 async function main() {
   console.log("🚀 Setting up frontend files from deployments...\n");
@@ -342,7 +344,7 @@ import { getAddresses } from './contracts';
 import ZKPassportNFT_ABI from './abis/ZKPassportNFT.json';
 
 function MyComponent({ chainId }: { chainId: number }) {
-  const network = chainId === 8453 ? 'base' : chainId === 1 ? 'ethereum' : chainId === 130 ? 'unichain' : 'base';
+  const network = chainId === 8453 ? 'base' : chainId === 1 ? 'ethereum' : chainId === 130 ? 'unichain' : chainId === 10 ? 'optimism' : 'base';
   const addresses = getAddresses(network);
 
   const { data } = useContractRead({

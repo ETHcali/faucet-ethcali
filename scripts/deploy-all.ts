@@ -55,6 +55,9 @@ function getConfig(networkName: string): DeploymentConfig {
     case "unichain":
       usdcAddress = process.env.USDC_ADDRESS_UNI!;
       break;
+    case "optimism":
+      usdcAddress = process.env.USDC_ADDRESS_OP!;
+      break;
     default:
       // For local/test networks, we'll deploy a mock
       usdcAddress = "";
@@ -104,6 +107,7 @@ async function main() {
     1: "ethereum",
     8453: "base",
     130: "unichain",
+    10: "optimism",
     31337: "hardhat",
   };
   const networkName = chainIdToNetwork[chainId] || `chain-${chainId}`;
@@ -175,11 +179,13 @@ async function main() {
   // Deploy Swag1155
   console.log("\n📦 Deploying Swag1155...");
   console.log(`   Admin will be: ${config.swagAdmin}`);
+  const POAP_ADDRESS = "0x22C1f6050E56d2876009903609a2cC3fEf83B415";
   const swag1155 = await viem.deployContract("Swag1155", [
     "ipfs://",
     usdcAddress as `0x${string}`,
     config.swagTreasury as `0x${string}`,
     config.swagAdmin as `0x${string}`,
+    POAP_ADDRESS as `0x${string}`,
   ]);
   const swag1155Address = swag1155.address;
   console.log(`   Swag1155 deployed: ${swag1155Address}`);
